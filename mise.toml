@@ -1,0 +1,38 @@
+[tools]
+node = "24.21.0"
+
+[tasks.setup]
+description = "Install locked npm workspace dependencies"
+run = "npm ci"
+
+[tasks.dev]
+description = "Start the local API and Vite development servers"
+run = "npm run dev"
+
+[tasks.build]
+description = "Typecheck and build both workspaces"
+run = "npm run build"
+
+[tasks.test]
+description = "Run isolated API integration tests"
+run = "npm test"
+
+[tasks.start]
+description = "Serve the previously built app"
+run = "npm start"
+
+[tasks."test:startup"]
+description = "Check isolated startup scenarios (build first)"
+run = "npm run test:startup"
+
+[tasks."docker:up"]
+description = "Build and start the loopback-only container"
+run = "docker compose up --build -d --wait"
+
+[tasks."docker:down"]
+description = "Stop and remove containers, preserving the data volume"
+run = "docker compose down"
+
+[tasks."docker:logs"]
+description = "Follow container logs"
+run = "docker compose logs --follow --tail 100"

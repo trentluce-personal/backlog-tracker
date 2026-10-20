@@ -1,0 +1,19 @@
+{
+  "name": "backlog-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/api", "apps/web"],
+  "engines": { "node": ">=24.13.0" },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --workspace apps/api && npm run build --workspace apps/web",
+    "start": "npm run start --workspace apps/api",
+    "test": "npm run test --workspace apps/api",
+    "test:api": "npm run test --workspace apps/api",
+    "test:startup": "node scripts/check-startup.mjs",
+    "browser": "playwright-cli"
+  },
+  "devDependencies": {
+    "@playwright/cli": "0.1.22"
+  }
+}
