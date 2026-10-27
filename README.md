@@ -90,7 +90,18 @@ setting or changes to it. **Motion on** (accessible name: **Motion on — reduce
 sets an explicit browser preference in `backlog-motion` (`full` or `reduce`). Saved
 choices are retained; missing/invalid values or unavailable storage default to full
 motion. Clear that key to restore the default. Full motion includes contact-point/keyboard
-button ripples, including on the theme switch. Palette changes are immediate.
+button ripples, including on the theme switch. Supported browsers reveal the new
+palette from the theme button's center in two distinct directions. Light to dark
+takes 2,200 ms: feathered charcoal/inky shadows creep across the page with a broad
+penumbra and uneven smoke-like gradient banks, without luminous rims. Dark to light
+takes 1,800 ms: an ivory/champagne bloom, soft gold halos and restrained radial rays
+spread outward, clearing into the clean light palette. Each is a single sweep with
+fade-in/out, using gradient falloff rather than large blur filters or repeated pulses.
+The choice is saved immediately; another pointer/keyboard action skips the reveal so controls
+stay responsive, including rapid theme changes. An inert old-palette copy masks
+away over the live page, preserving native pointer and keyboard actions throughout.
+Browsers without animated CSS custom properties, masks, or the animation API switch
+palettes directly (with button ripples when supported).
 Reduced motion switches themes directly and suppresses ornamental motion. Effects
 never submit forms or delay other actions; unsupported animation APIs fall back to
 ordinary controls.

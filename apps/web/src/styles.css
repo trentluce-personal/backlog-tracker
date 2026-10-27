@@ -209,6 +209,28 @@ option { background: var(--control); color: var(--text); }
 .theme-toggle svg { width: 18px; height: 18px; flex-shrink: 0; }
 .button, .nav-item, .icon-button { position: relative; isolation: isolate; overflow: hidden; }
 .interaction-ripple { position: absolute; border-radius: 50%; background: currentColor; pointer-events: none; z-index: -1; }
+@property --theme-reveal-radius { syntax: '<length>'; inherits: false; initial-value: 0px; }
+.theme-reveal-stage { position: fixed; inset: 0; z-index: 2147483647; overflow: hidden; contain: strict; pointer-events: none; }
+.theme-reveal { position: absolute; inset: 0; overflow: hidden; background: var(--background); color: var(--text); mask-image: radial-gradient(circle at var(--theme-x) var(--theme-y), transparent max(0px, calc(var(--theme-reveal-radius) - 90px)), #000 calc(var(--theme-reveal-radius) + 45px)); }
+.theme-reveal-stage, .theme-reveal-stage * { pointer-events: none !important; }
+.theme-reveal * { transition: none !important; animation: none !important; }
+.theme-reveal-halo, .theme-reveal-atmosphere { position: absolute; inset: 0; }
+/* Darkness has no bright edge: a wide charcoal penumbra and uneven banks of ink
+   overlap the feathered old page. The second bank breaks the perfect-circle read. */
+[data-direction="shadow"] .theme-reveal { mask-image: radial-gradient(circle at var(--theme-x) var(--theme-y), transparent max(0px, calc(var(--theme-reveal-radius) - 130px)), #000 calc(var(--theme-reveal-radius) + 110px)); }
+[data-direction="shadow"] .theme-reveal-halo { background: radial-gradient(circle at var(--theme-x) var(--theme-y), transparent max(0px, calc(var(--theme-reveal-radius) - 290px)), #10111699 max(0px, calc(var(--theme-reveal-radius) - 100px)), #15161bd9 var(--theme-reveal-radius), #24252c66 calc(var(--theme-reveal-radius) + 110px), transparent calc(var(--theme-reveal-radius) + 260px)); }
+[data-direction="shadow"] .theme-reveal-atmosphere { background:
+  radial-gradient(ellipse at 22% 18%, #111218b3, transparent 57%),
+  radial-gradient(ellipse at 76% 62%, #17181dcc, transparent 49%),
+  radial-gradient(ellipse at 35% 91%, #090a1080, transparent 53%);
+  mask-image: radial-gradient(ellipse at var(--theme-x) var(--theme-y), transparent max(0px, calc(var(--theme-reveal-radius) - 240px)), #000 var(--theme-reveal-radius), transparent calc(var(--theme-reveal-radius) + 310px)); }
+/* A single generous ivory/champagne bloom, two soft halos and long restrained
+   rays. Radial falloff provides light without blur filters or repeated pulses. */
+[data-direction="radiance"] .theme-reveal-halo { background:
+  radial-gradient(circle at var(--theme-x) var(--theme-y), transparent max(0px, calc(var(--theme-reveal-radius) - 360px)), #fff5d96b max(0px, calc(var(--theme-reveal-radius) - 210px)), #fff9e8e6 max(0px, calc(var(--theme-reveal-radius) - 45px)), #fff8df var(--theme-reveal-radius), #edcb8380 calc(var(--theme-reveal-radius) + 80px), transparent calc(var(--theme-reveal-radius) + 220px)),
+  radial-gradient(circle at var(--theme-x) var(--theme-y), transparent max(0px, calc(var(--theme-reveal-radius) - 260px)), #ffe7ae99 max(0px, calc(var(--theme-reveal-radius) - 220px)), transparent max(0px, calc(var(--theme-reveal-radius) - 175px))); }
+[data-direction="radiance"] .theme-reveal-atmosphere { background: repeating-conic-gradient(from 12deg at var(--theme-x) var(--theme-y), transparent 0deg 13deg, #fff0c266 16deg, #fffae6a6 18deg, transparent 23deg 36deg); mask-image: radial-gradient(circle at var(--theme-x) var(--theme-y), transparent max(0px, calc(var(--theme-reveal-radius) - 380px)), #000 max(0px, calc(var(--theme-reveal-radius) - 160px)), #00000080 calc(var(--theme-reveal-radius) + 80px), transparent calc(var(--theme-reveal-radius) + 350px)); }
+:root[data-motion="reduce"] .theme-reveal-stage { display: none; }
 :root[data-motion="full"] :is(.button, .nav-item, .icon-button) { transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease; }
 :root[data-motion="full"] .button:active:not(:disabled) { transform: scale(.97); }
 :root[data-motion="reduce"] .interaction-ripple { display: none; }

@@ -1,8 +1,11 @@
-import { useLayoutEffect, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { applyTheme, readPreference, savePreference, type Motion, type Theme } from '../preferences';
+import { prepareThemeReveal } from '../themeReveal';
 
 export function AppearanceControls() {
   const [theme, setTheme] = useState<Theme>(() => document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  const intendedTheme = useRef(theme);
+  const reveal = useRef<(() => void) | null>(null);
   const [motion, setMotion] = useState<Motion>(() => {
     const saved = readPreference('backlog-motion');
     return saved === 'reduce' ? 'reduce' : 'full';
@@ -13,14 +16,37 @@ export function AppearanceControls() {
     document.documentElement.dataset.motion = motion;
   }, [motion]);
 
-  function toggleTheme() {
-    const next = theme === 'dark' ? 'light' : 'dark';
+  useLayoutEffect(() => {
+    // Any new action dismisses the ornamental snapshot before updating the UI.
+    const skip = () => { reveal.current?.(); reveal.current = null; };
+    document.addEventListener('pointerdown', skip, true);
+    document.addEventListener('keydown', skip, true);
+    window.addEventListener('resize', skip);
+    return () => {
+      skip();
+      document.removeEventListener('pointerdown', skip, true);
+      document.removeEventListener('keydown', skip, true);
+      window.removeEventListener('resize', skip);
+    };
+  }, []);
+
+  function toggleTheme(event: MouseEvent<HTMLButtonElement>) {
+    const from = intendedTheme.current;
+    const next = from === 'dark' ? 'light' : 'dark';
+    intendedTheme.current = next;
+    savePreference('backlog-theme', next);
+    reveal.current?.();
+    reveal.current = null;
+    try {
+      if (motion === 'full') reveal.current = prepareThemeReveal(event.currentTarget, from);
+    } catch { /* Appearance still changes if snapshot/animation is unavailable. */ }
     applyTheme(next);
     setTheme(next);
-    savePreference('backlog-theme', next);
   }
 
   function toggleMotion() {
+    reveal.current?.();
+    reveal.current = null;
     const next = motion === 'full' ? 'reduce' : 'full';
     setMotion(next);
     savePreference('backlog-motion', next);
