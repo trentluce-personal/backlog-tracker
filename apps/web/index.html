@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#191918" />
+    <script>
+      // Apply preferences before styles/React load, including when storage is blocked.
+      (() => {
+        let theme = 'dark';
+        let motion = 'full';
+        try {
+          const savedTheme = localStorage.getItem('backlog-theme');
+          const savedMotion = localStorage.getItem('backlog-motion');
+          if (savedTheme === 'light' || savedTheme === 'dark') theme = savedTheme;
+          if (savedMotion === 'full' || savedMotion === 'reduce') motion = savedMotion;
+        } catch { /* Session preferences still work without storage. */ }
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.motion = motion;
+        document.documentElement.style.colorScheme = theme;
+        document.documentElement.style.backgroundColor = theme === 'dark' ? '#191918' : '#f6f2eb';
+        document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#191918' : '#f6f2eb';
+      })();
+    </script>
+    <meta name="description" content="A quiet space for your projects, tasks, and next steps. Your personal, local backlog." />
+    <title>Backlog — your personal workspace</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

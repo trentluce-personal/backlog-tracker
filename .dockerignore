@@ -1,0 +1,33 @@
+# Only build inputs enter the context. Local databases, secrets, tool state,
+# verification artifacts and unrelated files are excluded by default.
+**
+!package.json
+!package-lock.json
+!apps/
+!apps/api/
+!apps/api/package.json
+!apps/api/tsconfig.json
+!apps/api/src/
+!apps/api/src/**
+!apps/web/
+!apps/web/package.json
+!apps/web/tsconfig.json
+!apps/web/vite.config.ts
+!apps/web/index.html
+!apps/web/src/
+!apps/web/src/**
+!apps/web/public/
+!apps/web/public/**
+# Deny private/generated files even if placed inside an allowed source tree.
+**/node_modules
+**/dist
+**/.git
+**/.opencode
+**/.env*
+**/*.sqlite*
+**/*.db*
+**/*.pem
+**/*.key
+**/artifacts
+**/.playwright-cli
+**/*.log

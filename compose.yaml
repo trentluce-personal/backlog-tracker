@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:${BACKLOG_HOST_PORT:-3001}:3001"
+    environment:
+      BACKLOG_HOST: 0.0.0.0
+      PORT: "3001"
+      BACKLOG_DB_PATH: /app/data/backlog.sqlite
+    volumes:
+      - backlog-data:/app/data
+    stop_grace_period: 20s
+
+volumes:
+  backlog-data:
