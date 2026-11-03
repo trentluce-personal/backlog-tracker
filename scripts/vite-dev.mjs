@@ -9,8 +9,11 @@ for (const value of [port, apiPort]) {
   if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error('Ports must be integers from 1 to 65535.');
 }
 const server = await createServer({
+  ...(process.env.BACKLOG_DOCKER_DEV === '1' ? { cacheDir: '/tmp/backlog-vite-cache', configLoader: 'runner', publicDir: '/source/web/public' } : {}),
   server: {
-    host: '127.0.0.1', port, strictPort: true,
+    host: process.env.BACKLOG_DOCKER_DEV === '1' ? '0.0.0.0' : '127.0.0.1', port, strictPort: true,
+    cors: false,
+    ...(process.env.BACKLOG_DOCKER_DEV === '1' ? { watch: { usePolling: true, interval: 300 } } : {}),
     proxy: { '/api': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: false } },
   },
 });

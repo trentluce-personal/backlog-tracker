@@ -1,0 +1,43 @@
+.modeling .workspace-header { gap: 12px; flex-wrap: wrap; }
+.modeling h1 { margin: 0; font-size: 26px; }
+.modeling-notice { margin: 12px 0 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.modeling-notice strong { color: var(--text); }
+.modeling-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.modeling-stage h2 { font-size: 14px; }
+.modeling-stage-heading p { margin-top: 5px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.modeling-form label:not(:first-child) { margin-top: 16px; }
+.modeling-hint { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 8px; }
+.modeling-error { color: var(--error); font-size: 12px; line-height: 1.5; margin-top: 8px; }
+.modeling-stage { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.modeling-stage-heading { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; }
+.modeling-stage-heading > span { margin-left: auto; color: var(--muted); font-size: 11px; }
+.modeling-help { color: var(--muted); font-size: 12px; }
+.modeling-help summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 6px; color: var(--text); }
+.modeling-help summary::before { content: '+'; color: var(--accent); }
+.modeling-help[open] { flex-basis: 100%; }
+.modeling-help[open] summary::before { content: '−'; }
+.modeling-help p { max-width: 75ch; padding-bottom: 6px; }
+.modeling-route-warning { padding: 0 18px 14px; color: var(--error); font-size: 12px; line-height: 1.5; }
+.modeling-canvas-scroll { overflow: auto; border-block: 1px solid var(--line); }
+.modeling-canvas-region { position: relative; }
+.modeling-canvas { position: relative; width: 100%; min-width: 680px; aspect-ratio: 5 / 3; background-color: var(--column); }
+.modeling-svg { display: block; width: 100%; height: 100%; position: absolute; inset: 0; }
+.modeling-grid-dot { fill: var(--control-border); opacity: .35; }
+.modeling-empty { position: absolute; inset: 0; z-index: 1; padding: 16px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; pointer-events: none; color: var(--muted); font-size: 12px; }
+.modeling-empty span { color: var(--accent); font-size: 44px; line-height: 1; margin-bottom: 12px; }
+.modeling-empty strong { color: var(--text); font-size: 14px; }.modeling-empty p { margin-top: 7px; }
+.modeling-edge { fill: none; stroke: var(--status); stroke-width: 1.8; }.modeling-svg marker path { fill: var(--status); }
+.modeling-badge-leader { stroke: var(--status); stroke-width: 1; opacity: .65; }
+.modeling-edge-badge rect { fill: var(--column); stroke: var(--line); stroke-width: 1; }.modeling-edge-badge text { fill: var(--text); font-family: "Segoe UI", sans-serif; font-size: 12px; font-weight: 600; }
+.modeling-node { cursor: grab; touch-action: none; outline: none; }.modeling-node:active { cursor: grabbing; }
+.modeling-node:focus-visible { outline: none; }
+.modeling-node-body { fill: var(--surface); stroke: var(--accent); stroke-width: 2px; }.modeling-node:hover .modeling-node-body { fill: var(--selected); }.modeling-node:focus-visible .modeling-node-body { stroke: var(--text); stroke-width: 3px; }
+.modeling-node-ring { fill: none; stroke: transparent; stroke-width: 22px; pointer-events: stroke; cursor: crosshair; }
+.modeling-node-ring-visible { fill: none; stroke: var(--accent); stroke-width: 1.5px; opacity: 0; pointer-events: none; }
+.modeling-node:hover .modeling-node-ring-visible, .modeling-node:focus-visible .modeling-node-ring-visible { opacity: .7; }
+@media (hover: none), (pointer: coarse) { .modeling-node-ring-visible { opacity: .6; } }
+.modeling-preview { pointer-events: none; fill: none; stroke: var(--accent); stroke-width: 2px; stroke-dasharray: 6 5; }.modeling-preview circle { stroke-width: 1.5px; stroke-dasharray: none; }
+.modeling-node text { fill: var(--text); font-family: "Segoe UI", sans-serif; font-size: 12px; font-weight: 600; pointer-events: none; }
+.modeling-summary { padding: 8px 16px; font-size: 12px; line-height: 1.6; border-top: 1px solid var(--line); }.modeling-summary summary { cursor: pointer; min-height: 44px; padding-block: 12px; overflow-wrap: anywhere; }.modeling-summary ul { padding-left: 20px; margin: 0 0 8px; overflow-wrap: anywhere; }.modeling-summary li + li { margin-top: 4px; }
+.modeling-unrouted { color: var(--error); }
+@media (max-width: 600px) { .modeling .workspace-header { align-items: stretch; }.modeling-actions { width: 100%; }.modeling-stage-heading > div { flex-basis: 100%; }.modeling-stage-heading > span { margin-left: 0; }.modeling-help { margin-left: auto; }.modeling-help[open] { margin-left: 0; }.modeling-canvas { min-width: 680px; }.modeling-actions .button { min-height: 44px; } }

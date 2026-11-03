@@ -110,7 +110,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const server = createApp({ dbPath: process.env.BACKLOG_DB_PATH ? resolve(process.env.BACKLOG_DB_PATH) : resolve(root, 'data/backlog.sqlite') });
   server.on('error', (error) => { console.error(error.message); server.close(); process.exitCode = 1; });
   server.listen(port, host, () => {
-    console.log(`Backlog Tracker listening at http://${host}:${port}`);
+    console.log(`The Forge listening at http://${host}:${port}`);
     if (process.send) process.send({ type: 'backlog:listening' });
   });
   const stop = () => { server.close(); server.closeIdleConnections(); };

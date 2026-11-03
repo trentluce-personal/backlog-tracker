@@ -20,6 +20,15 @@
       "problemMatcher": []
     },
     {
+      "label": "Restart application",
+      "type": "process",
+      "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Restart"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "runOptions": { "instanceLimit": 1 },
+      "problemMatcher": []
+    },
+    {
       "label": "View application logs",
       "type": "process",
       "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",

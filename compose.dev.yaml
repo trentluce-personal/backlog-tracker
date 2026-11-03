@@ -1,0 +1,27 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "127.0.0.1:${BACKLOG_DEV_HOST_PORT:-5173}:5173"
+    environment:
+      BACKLOG_HOST: 127.0.0.1
+      PORT: "3001"
+      BACKLOG_DB_PATH: /app/data/backlog.sqlite
+      BACKLOG_DOCKER_DEV: "1"
+    volumes:
+      - backlog-data:/app/data
+      - ./apps/api/src:/app/apps/api/src:ro
+      - ./apps/web:/source/web:ro
+      - ./apps/web/src:/app/apps/web/src:ro
+      - ./apps/web/index.html:/app/apps/web/index.html:ro
+      - ./apps/web/vite.config.ts:/app/apps/web/vite.config.ts:ro
+      - ./apps/web/tsconfig.json:/app/apps/web/tsconfig.json:ro
+      - ./scripts:/app/scripts:ro
+    stop_grace_period: 20s
+
+volumes:
+  backlog-data:
+    external: true
+    name: ${BACKLOG_DEV_VOLUME:?Resolved production volume is required}

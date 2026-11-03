@@ -15,5 +15,5 @@ export function applyTheme(theme: Theme) {
   root.style.colorScheme = theme;
   // The bootstrap's inline background is needed only before CSS loads.
   root.style.removeProperty('background-color');
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#191918' : '#f6f2eb');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#10121b' : '#f1f2f3');
 }

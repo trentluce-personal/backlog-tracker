@@ -125,11 +125,11 @@ try {
   touchedSource = true;
   await utimes(watchedSource, sourceTimes.atime, new Date());
   const reloadDeadline = Date.now() + 10000;
-  while ((logs.match(/Backlog Tracker listening/g)?.length ?? 0) < 2 && Date.now() < reloadDeadline) {
+  while ((logs.match(/The Forge listening/g)?.length ?? 0) < 2 && Date.now() < reloadDeadline) {
     assert.equal(child.exitCode, null, logs);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  assert.equal(logs.match(/Backlog Tracker listening/g)?.length, 2, 'API source change must restart the owned child.');
+  assert.equal(logs.match(/The Forge listening/g)?.length, 2, 'API source change must restart the owned child.');
   await ready(web);
   assert.deepEqual(await (await fetch(web + '/api/projects')).json(), { projects: [project] });
   console.log('PASS API source watch: owned API restarted, frontend resumed, persisted project unchanged.');
