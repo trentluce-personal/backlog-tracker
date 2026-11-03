@@ -1,0 +1,11 @@
+FROM node:24.21.0-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/web/package.json ./apps/web/package.json
+RUN npm ci --no-audit --no-fund && mkdir -p /app/data && chown node:node /app/data
+USER node
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=2s --timeout=5s --start-period=15s --retries=10 \
+    CMD ["node", "--input-type=module", "-e", "const r = await fetch('http://127.0.0.1:5173/api/projects', {signal: AbortSignal.timeout(4000)}); if (!r.ok || !Array.isArray((await r.json()).projects)) process.exit(1)"]
+CMD ["node", "scripts/dev.mjs"]

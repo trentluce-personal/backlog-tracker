@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { watch } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +11,7 @@ let stopping = false;
 let watcher;
 let debounce;
 let restart = Promise.resolve();
+let pollTimer;
 
 async function terminate(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -29,6 +31,7 @@ async function stop(code = 0) {
   process.exitCode = code;
   clearTimeout(debounce);
   watcher?.close();
+  clearInterval(pollTimer);
   // Stop the proxy before releasing the API port.
   await terminate(frontend);
   await Promise.all([...children].map(terminate));
@@ -79,22 +82,51 @@ async function startServers() {
 
 process.on('SIGINT', () => void stop());
 process.on('SIGTERM', () => void stop());
+async function snapshot(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const records = await Promise.all(entries.map(async (entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return snapshot(path);
+    if (!entry.isFile()) return '';
+    const info = await stat(path);
+    return `${path}:${info.mtimeMs}:${info.size}`;
+  }));
+  return records.flat().sort().join('\n');
+}
+
+function changed() {
+  clearTimeout(debounce);
+  debounce = setTimeout(() => {
+    restart = restart.then(async () => {
+      if (stopping) return;
+      console.log('API source changed; restarting development servers.');
+      await terminate(frontend);
+      await terminate(api);
+      await startServers();
+    }).catch((error) => { console.error(error.message); return stop(1); });
+  }, 100);
+}
+
 try {
+  const apiSource = resolve(root, 'apps/api/src');
+  let previous = process.env.BACKLOG_DOCKER_DEV === '1' ? await snapshot(apiSource) : null;
   await startServers();
   if (!stopping) {
-    watcher = watch(resolve(root, 'apps/api/src'), { recursive: true }, () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        restart = restart.then(async () => {
-          if (stopping) return;
-          console.log('API source changed; restarting development servers.');
-          await terminate(frontend);
-          await terminate(api);
-          await startServers();
-        }).catch((error) => { console.error(error.message); return stop(1); });
-      }, 100);
-    });
-    watcher.on('error', (error) => { console.error(error.message); void stop(1); });
+    if (previous !== null) {
+      let polling = false;
+      pollTimer = setInterval(async () => {
+        if (polling || stopping) return;
+        polling = true;
+        try {
+          const current = await snapshot(apiSource);
+          if (current !== previous) { previous = current; changed(); }
+        } catch (error) { console.error(error.message); void stop(1); }
+        finally { polling = false; }
+      }, 500);
+    } else {
+      watcher = watch(apiSource, { recursive: true }, changed);
+      watcher.on('error', (error) => { console.error(error.message); void stop(1); });
+    }
   }
 } catch (error) {
   console.error(error.message);

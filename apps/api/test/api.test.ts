@@ -266,7 +266,7 @@ for (const host of [undefined, '0.0.0.0']) test(`standalone Node entrypoint (${h
       running.stderr!.on('data', (chunk) => { output += chunk; });
       running.stdout!.on('data', (chunk) => {
         output += chunk;
-        if (output.includes('Backlog Tracker listening')) { clearTimeout(timeout); resolve(); }
+        if (output.includes('The Forge listening')) { clearTimeout(timeout); resolve(); }
       });
     });
   }

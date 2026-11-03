@@ -34,11 +34,15 @@ function New-FakeRuntime {
             if ($value -in @('offline', 'hung')) { return [pscustomobject]@{ Code = 1; StdOut = ''; StdErr = $value } }
             [pscustomobject]@{ Code = 0; StdOut = $value; StdErr = '' }
         }.GetNewClosure()
-        Compose = { param($Arguments) $state.Events += 'compose:' + ($Arguments -join ' '); return $state.ComposeCode }.GetNewClosure()
+        Compose = { param($Arguments) $state.Events += 'production:' + ($Arguments -join ' '); return $state.ComposeCode }.GetNewClosure()
+        Configure = { }.GetNewClosure()
+        EnsureVolume = { return 0 }.GetNewClosure()
+        DevCompose = { param($Arguments) $state.Events += 'compose:' + ($Arguments -join ' '); return $state.ComposeCode }.GetNewClosure()
         Launch = { $state.Events += 'launch'; if ($state.LaunchError) { throw $state.LaunchError } }.GetNewClosure()
         Now = { $state.Time }.GetNewClosure()
         Sleep = { param($Milliseconds) $state.Time += $Milliseconds }.GetNewClosure()
     }
+    $runtime.DevProbe = { param($Arguments, $Timeout) & $runtime.Probe (@('compose') + $Arguments) $Timeout }.GetNewClosure()
     @{ Runtime = $runtime; State = $state }
 }
 
@@ -74,7 +78,7 @@ Test 'ready engine: no Desktop launch, bounded health wait, actual alternate-por
     $code = Invoke-ApplicationLifecycle Start $fake.Runtime 3 47 -InformationVariable messages
     Assert ($code -eq 0) 'Start must succeed.'
     Assert ($fake.State.Events -notcontains 'launch') 'Ready engine must not launch Desktop.'
-    Assert ($fake.State.Events -contains 'compose:up --build -d --wait --wait-timeout 47') 'Expected bounded Compose health wait.'
+    Assert ($fake.State.Events -contains 'compose:up --build -d --wait --wait-timeout 47 dev') 'Expected bounded Compose health wait.'
     Assert (($messages -join "`n") -match 'http://127.0.0.1:43123') 'Must print actual Compose binding.'
 }
 
@@ -94,7 +98,7 @@ Test 'nonzero real probes retain stderr diagnostics for version, engine timeout 
     }
 }
 
-Test 'cross-process workspace guard rejects overlapping Start/Stop, permits logs, and releases on completion/termination' {
+Test 'cross-process workspace guard rejects overlapping Start/Stop/Restart in each phase, permits logs, and releases on completion/termination' {
     $fixture = Join-Path $root ('artifacts\lifecycle-lock-' + [guid]::NewGuid())
     [void][IO.Directory]::CreateDirectory($fixture)
     $name = 'Local\BacklogLifecycleTest-' + [guid]::NewGuid()
@@ -104,7 +108,7 @@ Test 'cross-process workspace guard rejects overlapping Start/Stop, permits logs
     try {
         $runner = Join-Path $fixture 'pending start.ps1'
         [IO.File]::WriteAllText($runner, @'
-param($Helper, $Workspace, $Name)
+param($Helper, $Workspace, $Name, $Operation, $PendingCommand)
 $ErrorActionPreference = 'Stop'
 . $Helper
 $ready = [Threading.EventWaitHandle]::OpenExisting($Name + '-ready')
@@ -115,43 +119,49 @@ $runtime = @{
         $value = if ($Arguments[0] -eq 'info') { 'linux' } elseif ($Arguments[1] -eq 'port') { '127.0.0.1:43123' } else { 'mock Compose' }
         [pscustomobject]@{Code=0; StdOut=$value; StdErr=''}
     }
-    Compose = { [void]$ready.Set(); if (-not $release.WaitOne(30000)) { throw 'Test release timed out' }; return 0 }
+    Compose = { return 0 }
+    Configure = { }
+    EnsureVolume = { return 0 }
+    DevProbe = { param($Arguments, $Timeout) [pscustomobject]@{Code=0; StdOut='127.0.0.1:43123'; StdErr=''} }
+    DevCompose = { param($Arguments) if ($Arguments[0] -eq $PendingCommand) { [void]$ready.Set(); if (-not $release.WaitOne(30000)) { throw 'Test release timed out' } }; return 0 }
     Launch = { throw 'Must not launch Desktop' }
     Now = { 0 }
     Sleep = { throw 'Must not sleep' }
 }
-try { exit (Invoke-GuardedApplicationLifecycle $Workspace Start $runtime) }
+try { exit (Invoke-GuardedApplicationLifecycle $Workspace $Operation $runtime) }
 catch { [Console]::Error.WriteLine($_); exit 1 }
 '@)
         $powershell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-        $childArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" "{1}" "{2}" "{3}"' -f $runner, "$PSScriptRoot\application.ps1", $fixture, $name
+        foreach ($pending in @(@{ Operation='Start'; Command='up' }, @{ Operation='Stop'; Command='stop' }, @{ Operation='Restart'; Command='stop' }, @{ Operation='Restart'; Command='up' })) {
+        $childArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" "{1}" "{2}" "{3}" "{4}" "{5}"' -f $runner, "$PSScriptRoot\application.ps1", $fixture, $name, $pending.Operation, $pending.Command
         foreach ($mode in @('complete', 'terminate')) {
             [void]$ready.Reset(); [void]$release.Reset()
             $child = Start-Process -FilePath $powershell -ArgumentList $childArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput "$fixture\stdout.log" -RedirectStandardError "$fixture\stderr.log"
             # Retain a process handle before exit (PS 5.1 Start-Process can otherwise
             # lose the native exit code after its asynchronous exit notification).
             $null = $child.Handle
-            Assert ($ready.WaitOne(10000)) 'Child Start must reach pending fake Compose.'
+            Assert ($ready.WaitOne(10000)) "Child $($pending.Operation) must reach pending fake Compose $($pending.Command)."
             $watch = [Diagnostics.Stopwatch]::StartNew()
-            foreach ($operation in @('Start', 'Stop')) {
+            foreach ($operation in @('Start', 'Stop', 'Restart')) {
                 $fake = New-FakeRuntime
                 Assert-Fails { Invoke-GuardedApplicationLifecycle ($fixture.ToUpperInvariant() + '\') $operation $fake.Runtime } 'Another lifecycle operation is in progress.*Retry.*terminate'
                 Assert ($fake.State.Events.Count -eq 0) 'Rejected overlap must perform no Docker operations.'
             }
-            Assert ($watch.Elapsed.TotalSeconds -lt 5) 'Overlap must fail fast, not wait for Start.'
+            Assert ($watch.Elapsed.TotalSeconds -lt 5) 'Overlap must fail fast.'
             $fake = New-FakeRuntime
             Assert ((Invoke-GuardedApplicationLifecycle $fixture Logs $fake.Runtime) -eq 0) 'Logs must bypass lifecycle lock.'
             $fake = New-FakeRuntime
             Assert ((Invoke-GuardedApplicationLifecycle (Join-Path $fixture 'other-workspace') Stop $fake.Runtime) -eq 0) 'Independent workspace must not be blocked.'
             if ($mode -eq 'complete') { [void]$release.Set() } else { $child.Kill() }
             Assert ($child.WaitForExit(10000)) 'Child must exit within bound.'
-            if ($mode -eq 'complete') { Assert ($child.ExitCode -eq 0) "Child start failed: $(Get-Content -LiteralPath "$fixture\stderr.log" -Raw)" }
+            if ($mode -eq 'complete') { Assert ($child.ExitCode -eq 0) "Child lifecycle failed: $(Get-Content -LiteralPath "$fixture\stderr.log" -Raw)" }
             $child.Dispose(); $child = $null
             $fake = New-FakeRuntime
             Assert ((Invoke-GuardedApplicationLifecycle $fixture Stop $fake.Runtime) -eq 0) 'Guard must be available after completion/termination.'
         }
+        }
         $fake = New-FakeRuntime
-        $fake.Runtime.Compose = { throw 'mock lifecycle failure' }
+        $fake.Runtime.DevCompose = { throw 'mock lifecycle failure' }
         Assert-Fails { Invoke-GuardedApplicationLifecycle $fixture Stop $fake.Runtime } 'mock lifecycle failure'
         $fake = New-FakeRuntime
         Assert ((Invoke-GuardedApplicationLifecycle $fixture Stop $fake.Runtime) -eq 0) 'Exceptions must release the guard.'
@@ -167,7 +177,7 @@ Test 'delayed readiness: launch exactly once, Compose only after Linux probe' {
     $fake = New-FakeRuntime @('offline', 'offline', 'linux')
     Assert ((Invoke-ApplicationLifecycle Start $fake.Runtime 10) -eq 0) 'Delayed start must succeed.'
     Assert (@($fake.State.Events | Where-Object { $_ -eq 'launch' }).Count -eq 1) 'Launch exactly once.'
-    $expected = @('probe:compose version', 'probe:info --format {{.OSType}}', 'launch', 'probe:info --format {{.OSType}}', 'probe:info --format {{.OSType}}', 'compose:up --build -d --wait --wait-timeout 120', 'probe:compose port app 3001')
+    $expected = @('probe:compose version', 'probe:info --format {{.OSType}}', 'launch', 'probe:info --format {{.OSType}}', 'probe:info --format {{.OSType}}', 'production:stop app', 'compose:up --build -d --wait --wait-timeout 120 dev', 'probe:compose port dev 5173')
     Assert (($fake.State.Events -join '|') -eq ($expected -join '|')) 'No Compose before readiness.'
 }
 
@@ -201,7 +211,7 @@ Test 'polling deadline is bounded when Docker stays offline' {
 Test 'Compose startup failure propagates exact exit code' {
     $fake = New-FakeRuntime @('linux') 17
     Assert ((Invoke-ApplicationLifecycle Start $fake.Runtime) -eq 17) 'Preserve Compose failure code.'
-    Assert ($fake.State.Events -notcontains 'probe:compose port app 3001') 'No success URL after failed startup.'
+    Assert ($fake.State.Events -notcontains 'probe:compose port dev 5173') 'No success URL after failed startup.'
 }
 
 Test 'missing Compose fails before engine probe/Desktop/Compose' {
@@ -214,7 +224,7 @@ Test 'missing Compose fails before engine probe/Desktop/Compose' {
 Test 'stop uses only compose stop: preserves volumes and does not launch Desktop' {
     $fake = New-FakeRuntime @('offline')
     Assert ((Invoke-ApplicationLifecycle Stop $fake.Runtime) -eq 0) 'Stop succeeds.'
-    Assert (($fake.State.Events -join '|') -eq 'probe:compose version|compose:stop') 'Only stop this project, no info/start/down/volume commands.'
+    Assert (($fake.State.Events -join '|') -eq 'probe:compose version|compose:stop dev') 'Only stop dev, no info/start/down/volume commands.'
 }
 
 Test 'stop failure propagates without launch; logs only follows project logs' {
@@ -222,7 +232,47 @@ Test 'stop failure propagates without launch; logs only follows project logs' {
     Assert ((Invoke-ApplicationLifecycle Stop $fake.Runtime) -eq 23) 'Preserve stop failure.'
     $fake = New-FakeRuntime
     Assert ((Invoke-ApplicationLifecycle Logs $fake.Runtime) -eq 0) 'Logs succeeds.'
-    Assert (($fake.State.Events -join '|') -eq 'probe:compose version|compose:logs --follow --tail 100') 'Logs must not start engine or app.'
+    Assert (($fake.State.Events -join '|') -eq 'probe:compose version|compose:logs --follow --tail 100 dev') 'Logs must not start engine or app.'
+}
+
+Test 'restart stops before rebuilding, waits for health, and reports the actual URL' {
+    $fake = New-FakeRuntime
+    $messages = @()
+    Assert ((Invoke-GuardedApplicationLifecycle $root Restart $fake.Runtime 3 47 -InformationVariable messages) -eq 0) 'Restart succeeds, including when Compose stop succeeds with no running app.'
+    $expected = @('probe:compose version', 'compose:stop dev', 'probe:compose version', 'probe:info --format {{.OSType}}', 'production:stop app', 'compose:up --build -d --wait --wait-timeout 47 dev', 'probe:compose port dev 5173')
+    Assert (($fake.State.Events -join '|') -eq ($expected -join '|')) 'Restart must use the existing stop and start flows in order.'
+    Assert (($messages -join "`n") -match 'http://127.0.0.1:43123') 'Restart must report the actual URL.'
+}
+
+Test 'restart propagates stop and start failures and never starts after failed stop' {
+    $fake = New-FakeRuntime @('linux') 23
+    Assert ((Invoke-GuardedApplicationLifecycle $root Restart $fake.Runtime) -eq 23) 'Restart must propagate the stop exit code.'
+    Assert (($fake.State.Events -join '|') -eq 'probe:compose version|compose:stop dev') 'A failed stop must prevent every start action.'
+    $fake = New-FakeRuntime
+    $state = $fake.State
+    $fake.Runtime.DevCompose = { param($Arguments) $state.Events += 'compose:' + ($Arguments -join ' '); if ($Arguments[0] -eq 'up') { return 17 }; return 0 }.GetNewClosure()
+    Assert ((Invoke-GuardedApplicationLifecycle $root Restart $fake.Runtime) -eq 17) 'Restart must propagate the start exit code.'
+    Assert ($fake.State.Events -notcontains 'probe:compose port dev 5173') 'A failed start must not report a URL.'
+    $fake = New-FakeRuntime
+    $fake.Runtime.DevCompose = { throw 'mock stop exception' }
+    Assert-Fails { Invoke-GuardedApplicationLifecycle $root Restart $fake.Runtime } 'mock stop exception'
+    Assert (($fake.State.Events -join '|') -eq 'probe:compose version') 'A stop exception must prevent start.'
+    $fake = New-FakeRuntime @('windows')
+    Assert-Fails { Invoke-GuardedApplicationLifecycle $root Restart $fake.Runtime } 'requires Linux containers'
+    Assert ($fake.State.Events -contains 'compose:stop dev' -and -not ($fake.State.Events -like 'compose:up*')) 'A start exception must fail after stop, before up.'
+}
+
+Test 'database mount validation rejects subpaths, nested sidecars and inherited mounts' {
+    $app = '{"environment":{"BACKLOG_DB_PATH":"/app/data/backlog.sqlite"},"volumes":[{"type":"volume","source":"backlog-data","target":"/app/data","volume":{}}]}' | ConvertFrom-Json
+    Assert-SafeDatabaseMount $app
+    $app.volumes[0].volume | Add-Member -NotePropertyName subpath -NotePropertyValue 'nested'
+    Assert-Fails { Assert-SafeDatabaseMount $app } 'database mount or path'
+    $app.volumes[0].volume.PSObject.Properties.Remove('subpath')
+    $app.volumes += [pscustomobject]@{ type='bind'; source='fixture'; target='/app/data/other/../backlog.sqlite-wal' }
+    Assert-Fails { Assert-SafeDatabaseMount $app } 'overlapping mount'
+    $app.volumes = @($app.volumes[0])
+    $app | Add-Member -NotePropertyName volumes_from -NotePropertyValue @('other')
+    Assert-Fails { Assert-SafeDatabaseMount $app } 'volumes_from'
 }
 
 # Exercise production discovery in a local function scope, without altering PATH
@@ -252,17 +302,17 @@ Test 'production runtime closures resolve probe and Desktop discovery outside fa
     Assert-Fails { & $runtime.Launch } 'mock Desktop discovery reached'
 }
 
-Test 'production Compose invocation preserves the single stop argument' {
+Test 'development Compose invocation preserves service argument' {
     $stub = Join-Path $root ('artifacts\compose-argv-' + [guid]::NewGuid() + '.ps1')
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $stub))
     [IO.File]::WriteAllText($stub, 'Write-Output ($args -join "|"); $global:LASTEXITCODE = 0')
     try {
         function Get-Command { [pscustomobject]@{ Source = $stub } }
-        function Invoke-DockerProbe { [pscustomobject]@{ Code = 0; StdOut = 'mock Compose version'; StdErr = '' } }
+        function Invoke-DockerProbe { param($Docker, $Arguments) if ($Arguments -contains 'config') { return [pscustomobject]@{ Code = 0; StdOut = '{"name":"fixture","services":{"app":{"environment":{"BACKLOG_DB_PATH":"/app/data/backlog.sqlite"},"volumes":[{"type":"volume","source":"backlog-data","target":"/app/data"}]}},"volumes":{"backlog-data":{"name":"fixture_backlog-data"}}}'; StdErr = '' } }; [pscustomobject]@{ Code = 0; StdOut = 'mock Compose version'; StdErr = '' } }
         $runtime = New-ApplicationRuntime $root
         $messages = @()
         Assert ((Invoke-ApplicationLifecycle Stop $runtime -InformationVariable messages) -eq 0) 'Production stop succeeds.'
-        Assert (($messages -join "`n") -match 'compose\|--ansi\|never\|--progress\|plain\|stop') 'Invocation must receive plain non-ANSI Compose options and the single stop argument.'
+        Assert (($messages -join "`n") -match 'compose\|--ansi\|never\|--progress\|plain\|.*\|stop\|dev') 'Invocation must receive development service argument.'
     }
     finally { Remove-Item -LiteralPath $stub -Force }
 }
@@ -289,7 +339,8 @@ public class NativeComposeFixture {
         if (GetConsoleMode(GetStdHandle(-10), out mode)) return 91;
         if (args.Length == 2 && args[0] == "compose" && args[1] == "version") { Console.WriteLine("Compose fixture"); return 0; }
         if (args.Length > 0 && args[0] == "info") { Console.WriteLine("linux"); return 0; }
-        if (args.Length > 1 && args[0] == "compose" && args[1] == "port") { Console.WriteLine("127.0.0.1:43123"); return 0; }
+        if (Array.IndexOf(args, "config") >= 0) { Console.WriteLine("{\"name\":\"fixture\",\"services\":{\"app\":{\"environment\":{\"BACKLOG_DB_PATH\":\"/app/data/backlog.sqlite\"},\"volumes\":[{\"type\":\"volume\",\"source\":\"backlog-data\",\"target\":\"/app/data\"}]}},\"volumes\":{\"backlog-data\":{\"name\":\"fixture_backlog-data\",\"external\":true}}}"); return 0; }
+        if (Array.IndexOf(args, "port") >= 0) { Console.WriteLine("127.0.0.1:43123"); return 0; }
         string argv = String.Join("|", args);
         // Same non-TTY failure shape as Compose; the real Docker reproduction
         // is recorded separately in artifacts/tooling/console-regression/.
@@ -304,18 +355,23 @@ public class NativeComposeFixture {
             if (!release.WaitOne(10000)) return 92;
         }
         Console.WriteLine("stdout-after-release");
-        return Int32.Parse(Environment.GetEnvironmentVariable("BACKLOG_TEST_EXIT"));
+        bool production = Array.IndexOf(args, "app") >= 0;
+        string code = production ? "0" : Environment.GetEnvironmentVariable(Array.IndexOf(args, "stop") >= 0 ? "BACKLOG_TEST_STOP_EXIT" : "BACKLOG_TEST_UP_EXIT");
+        return Int32.Parse(code ?? Environment.GetEnvironmentVariable("BACKLOG_TEST_EXIT"));
     }
 }
 '@
         Add-Type -TypeDefinition $source -OutputAssembly "$fixture\docker.exe" -OutputType ConsoleApplication
         $tasks = Get-Content -LiteralPath "$root\.vscode\tasks.json" -Raw | ConvertFrom-Json
         foreach ($case in @(
-            @{ Action='Start'; Code=0; Argv='up|--build|-d|--wait|--wait-timeout|120' },
-            @{ Action='Start'; Code=17; Argv='up|--build|-d|--wait|--wait-timeout|120' },
-            @{ Action='Stop'; Code=0; Argv='stop' },
-            @{ Action='Stop'; Code=23; Argv='stop' },
-            @{ Action='Logs'; Code=0; Argv='logs|--follow|--tail|100' }
+            @{ Action='Start'; Code=0; Argv='stop|app' },
+            @{ Action='Start'; Code=17; Argv='stop|app' },
+            @{ Action='Stop'; Code=0; Argv='stop|dev' },
+            @{ Action='Stop'; Code=23; Argv='stop|dev' },
+            @{ Action='Restart'; Code=0; Argv='stop|dev'; StopCode=0; UpCode=0 },
+            @{ Action='Restart'; Code=23; Argv='stop|dev'; StopCode=23; UpCode=0 },
+            @{ Action='Restart'; Code=17; Argv='stop|dev'; StopCode=0; UpCode=17 },
+            @{ Action='Logs'; Code=0; Argv='logs|--follow|--tail|100|dev' }
         )) {
             $name = 'Local\BacklogNativeOutput-' + [guid]::NewGuid()
             $release = New-Object Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset, $name)
@@ -333,6 +389,10 @@ public class NativeComposeFixture {
             $info.EnvironmentVariables['PATH'] = $fixture + ';' + $env:PATH
             $info.EnvironmentVariables['BACKLOG_TEST_RELEASE'] = $name
             $info.EnvironmentVariables['BACKLOG_TEST_EXIT'] = [string]$case.Code
+            if ($case.Action -eq 'Restart') {
+                $info.EnvironmentVariables['BACKLOG_TEST_STOP_EXIT'] = [string]$case.StopCode
+                $info.EnvironmentVariables['BACKLOG_TEST_UP_EXIT'] = [string]$case.UpCode
+            }
             $info.EnvironmentVariables['COMPOSE_PROGRESS'] = 'tty'
             $child = New-Object Diagnostics.Process
             $child.StartInfo = $info
@@ -352,11 +412,17 @@ public class NativeComposeFixture {
             Assert ($child.WaitForExit(10000)) 'Task process must exit within bound.'
             Assert ([Threading.Tasks.Task]::WaitAll(@($stdout, $stderr), 1000)) 'Output drain must complete.'
             Assert ($child.ExitCode -eq $case.Code) "Native $($case.Action) exit code must survive top-level task. Got $($child.ExitCode): $($stderr.Result)"
-            Assert ($stderr.Result.Trim() -ceq 'warning-marker') 'Native stderr warning must remain visible verbatim, without NativeCommandError/termination.'
-            Assert ($lines -ccontains ('argv=compose|--ansi|never|--progress|plain|' + $case.Argv)) 'Native argument boundaries/order must survive exact VS Code task argv.'
+            $warningCount = if ($case.Action -eq 'Start') { 2 } elseif ($case.Action -eq 'Restart' -and $case.StopCode -eq 0) { 3 } else { 1 }
+            $expectedWarnings = (@('warning-marker') * $warningCount) -join "`r`n"
+            Assert ($stderr.Result.Trim() -ceq $expectedWarnings) 'Native stderr warnings must remain visible verbatim, without NativeCommandError/termination.'
+            Assert (($lines -join "`n") -match ('argv=compose\|--ansi\|never\|--progress\|plain\|.*' + [regex]::Escape($case.Argv))) 'Native argument boundaries/order must survive exact VS Code task argv.'
             Assert ($stdout.Result -match 'stdout-after-release') 'Keep final stdout after process exit.'
             if ($case.Action -eq 'Start') {
                 Assert (($stdout.Result -match 'Application ready: http://127.0.0.1:43123') -eq ($case.Code -eq 0)) 'Only successful Start prints its URL.'
+            }
+            if ($case.Action -eq 'Restart') {
+                Assert (($stdout.Result -match 'up\|--build\|-d\|--wait\|--wait-timeout\|120\|dev') -eq ($case.StopCode -eq 0)) 'Restart runs up only after successful stop.'
+                Assert (($stdout.Result -match 'Application ready: http://127.0.0.1:43123') -eq ($case.Code -eq 0)) 'Only successful Restart prints its URL.'
             }
             $child.Dispose(); $child = $null
             $release.Dispose(); $release = $null
@@ -376,8 +442,8 @@ Test 'PowerShell syntax and JSON tasks map process args/cwd/actions without shel
         Assert ($errors.Count -eq 0) "Syntax errors in $file : $errors"
     }
     $tasks = Get-Content -LiteralPath "$root\.vscode\tasks.json" -Raw | ConvertFrom-Json
-    Assert ($tasks.version -eq '2.0.0' -and $tasks.tasks.Count -eq 3) 'Expected three VS Code tasks.'
-    $labels = @{ Start = 'Start application'; Stop = 'Stop application'; Logs = 'View application logs' }
+    Assert ($tasks.version -eq '2.0.0' -and $tasks.tasks.Count -eq 4) 'Expected four VS Code tasks.'
+    $labels = @{ Start = 'Start application'; Stop = 'Stop application'; Restart = 'Restart application'; Logs = 'View application logs' }
     foreach ($task in $tasks.tasks) {
         Assert ($task.type -eq 'process') 'Must not use default shell.'
         Assert ($task.command -eq '${env:SystemRoot}\System32\WindowsPowerShell\v1.0\powershell.exe') 'Explicit Windows PowerShell executable.'

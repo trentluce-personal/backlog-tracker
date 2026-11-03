@@ -1,4 +1,4 @@
-# Backlog Tracker
+# The Forge
 
 A local-only personal projects and tasks app. Create projects, add and edit tasks,
 track **Backlog**, **In Progress**, and **Done**, and search/filter your backlog.
@@ -7,8 +7,8 @@ data stays in a local SQLite database; there are no accounts or cloud services.
 
 ## Requirements
 
-- **Node.js 24.13 or newer**, including npm. `mise.toml` pins **24.21.0** for
-  repeatable development; the Docker image uses the same version.
+- Native development requires **Node.js 24.13 or newer**, including npm.
+  `mise.toml` pins **24.21.0**; Docker supplies its own Node and npm.
 - A current browser. Windows, macOS, and Linux are supported by the startup scripts.
 - Run commands from the repository root. Node's built-in SQLite module supplies
   the database; no separate database install is needed.
@@ -75,10 +75,10 @@ confirmation. Search and filters run locally over the loaded tasks.
 
 ### Theme and motion
 
-Backlog opens in **dark mode** by default, independently of your operating system's
+The Forge opens in **dark mode** by default, independently of your operating system's
 color preference. The visible **Light / Dark** button switches palettes and names
-the next action for screen readers. Both palettes use warm neutrals inspired by
-dndharness, with Backlog's green accents and existing board layout.
+the next action for screen readers. Both palettes pair steel-gray neutrals with
+forge-orange accents inspired by the logo, while retaining the board layout.
 
 Theme choices are saved in this browser under `backlog-theme` (`dark` or `light`).
 Missing/invalid values use dark; the page applies the preference before React
@@ -128,39 +128,68 @@ Docker engine is unavailable, it launches the installed Docker Desktop and waits
 up to **180 seconds** for a **Linux** engine before building/starting the app.
 It leaves your Docker context and container mode as configured. A Windows engine,
 missing tools, timeout, or failed Compose command fails the task with an error.
-After building, Compose waits up to **120 seconds** for application health and
-the task prints the actual loopback URL (normally **http://127.0.0.1:3001**).
+After building, Compose waits up to **120 seconds** for development health and
+the task prints the actual loopback URL (normally **http://127.0.0.1:5173**).
 Image downloads/build time is separate from these readiness deadlines.
 Compose runs with `--ansi never --progress plain`, so redirected/noninteractive
 task output does not require a console (including with `COMPOSE_PROGRESS=tty`).
 
-Use **Stop application** to run `docker compose stop` for this repository's
-Compose project, preserving its container and named data volume. It does not
+Start resolves the normal production Compose configuration and stops its `app`
+service first, without removing its container or volume. It then starts a separate
+`dev` service in the same project using the exact resolved `backlog-data` volume
+and `/app/data/backlog.sqlite`. Vite and the API run from mounted source inside
+Docker. Frontend edits hot reload; API edits restart the API and Vite in order.
+Polling detects Windows Docker filesystem changes. Changes to package manifests or
+the lockfile require Restart to rebuild the image. No native Node/npm is needed.
+The API listens only inside the container; Vite proxies `/api`, preserving Host.
+Only the Vite port is published, on host loopback. Use the printed 127.0.0.1 URL.
+
+Use **Stop application** to stop the `dev` service, preserving its container and
+named data volume. It does not
 launch or stop Docker Desktop. **View application logs** follows the last 100
 lines; terminating that log task only stops log following. To stop the app after
 startup completes, use **Stop application**, rather than terminating the completed
 Start task. Tasks run only when selected and allow one instance per task.
 
-Start and Stop also share a per-workspace lifecycle lock: overlapping operations
+Use **Restart application** to stop the development service, then rebuild and
+start it using the same health wait and URL reporting as Start. This applies source
+updates and preserves the data volume and project configuration. Compose handles
+an already-stopped app normally; a failed stop prevents the start.
+
+Start, Stop, and Restart share a per-workspace lifecycle lock: overlapping operations
 fail immediately with an instruction to retry after the active operation finishes
 or terminate its task first. Logs remain available while a lifecycle task runs.
-The lock applies to this helper, not direct Docker commands. Terminating Start
+The database maintenance helper uses the same lock.
+The lock applies to this helper, not direct Docker commands. Terminating Start or Restart
 does **not** guarantee cancellation or cleanup of a Compose build/start already
 in progress; run **Stop application** again once any pending build/start finishes.
 The lifecycle lock is released when the helper exits, including task termination.
 
-Tasks inherit VS Code's environment, including `BACKLOG_HOST_PORT` and
-`COMPOSE_PROJECT_NAME`; Compose also reads the repository's `.env`. For a different
-port, set `BACKLOG_HOST_PORT=3101` in `.env` before starting, or launch VS Code with
-that environment variable. Use the same project/port configuration for every
+Tasks inherit VS Code's Compose environment, including `COMPOSE_PROJECT_NAME`,
+`COMPOSE_FILE`, and `COMPOSE_ENV_FILES`; Compose also reads the repository's `.env`
+and normal production overrides. The resolved project and volume name are used for
+development, including an explicitly named or external production volume. If an
+override changes the production database path or `/app/data` mount, the tasks fail
+instead of selecting a different database. A volume with a custom driver/options
+must already exist (create it with production Compose first).
+For a different Vite host port, set `BACKLOG_DEV_HOST_PORT=5273` in `.env` before
+starting, or launch VS Code with that environment variable. `BACKLOG_HOST_PORT`
+controls the production port only. Use the same project/port configuration for every
 lifecycle command. Editing an integrated shell's environment does not change
 the environment of new VS Code tasks.
+
+To switch back to production, first run **Stop application**, then run
+`docker compose up --build -d --wait` with the same production Compose environment.
+Do not run production and development concurrently against the shared database;
+direct Compose commands bypass the task lock and do not stop the dev service.
+The native `data/backlog.sqlite` is separate and is not automatically migrated.
 
 The same helper can be run from PowerShell in the repository root:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\application.ps1 -Action Start
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\application.ps1 -Action Stop
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\application.ps1 -Action Restart
 # Optional startup/health deadlines (seconds):
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\application.ps1 -Action Start -DockerTimeoutSeconds 240 -HealthTimeoutSeconds 180
 # Dependency-free tooling checks; native process fixtures, no containers or Desktop launched:
@@ -217,40 +246,71 @@ Existing native `data/backlog.sqlite` is neither mounted nor migrated automatica
 
 ### Container backup and restore
 
-Stop the app before copying **the entire database directory**, including any
-`-wal` and `-shm` sidecars. With the container still present (`stop`, not `down`),
-these commands copy to a **new/empty** backup directory on the host:
+On Windows, use the offline maintenance helper from the repository root with the
+same Compose environment as the tasks. It resolves and displays the project and
+volume, stops both `dev` and `app`, and refuses to copy or restore while **any
+running container** mounts that volume. It works when only a dev container exists;
+at least one stopped app/dev container must exist to supply an image. If both were
+removed, start and stop the app first. It copies the entire database directory,
+including any `-wal` and `-shm` sidecars. Keep backups outside the repository.
 
-```sh
-docker compose stop
-docker compose cp app:/app/data/. ../backlog-container-backup
-docker compose start --wait
+Before proceeding, ensure no task, direct Compose command, other Docker client, or
+host process can start a writer until maintenance finishes. The writer check is a
+point-in-time check, not a lock against independent Docker commands or external
+volume access. Check the displayed project and volume carefully.
+
+```powershell
+# The destination must not exist; keep it in a safe location.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\database-maintenance.ps1 -Action Backup -Path ..\backlog-container-backup
 ```
 
-The `/.` source copies directory contents directly into the backup root, whether
-the destination is new or already exists and is empty. Keep this backup outside
-the build context/repository in a safe location. Before restoring, inspect
-`../backlog-container-backup` and confirm **`backlog.sqlite` is at its root**, with
-any saved `-wal`/`-shm` sidecars alongside it (not nested in a `data` directory).
-Stop the app and preserve a separate backup of its current `/app/data` directory
-using the same copy command with a different new/empty destination; do not
-overwrite the backup being restored. Only then run the destructive restore below,
-which clears `/app/data` in this Compose project's stopped volume and copies the
-saved directory contents back. Double-check the project and both backups first:
+Before restoring, inspect the backup: `backlog.sqlite` must be at its root, with
+any sidecars alongside it. First create a **separate** backup of the current data
+using the command above and a different new destination. Then run the destructive
+restore below, which clears the resolved volume and copies in the backup; it fixes
+ownership to UID/GID 1000. A failure during restore can leave partial data; retain
+the separate backup. The services remain stopped until explicitly started.
 
-```sh
-docker compose stop
-docker compose run --rm --no-deps app node --input-type=module -e "import {readdir,rm} from 'node:fs/promises'; for (const name of await readdir('/app/data')) await rm('/app/data/'+name,{recursive:true,force:true});"
-docker compose cp ../backlog-container-backup/. app:/app/data
-docker compose run --rm --no-deps --user root app chown -R node:node /app/data
-docker compose start --wait
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\database-maintenance.ps1 -Action Restore -Path ..\backlog-container-backup
 ```
 
-The one-off ownership command makes the restored files writable by the normal
-non-root process (UID/GID 1000), including after copying through a Windows host.
-Do not copy a live database, mix files from different backups, or remove the named
-volume as part of an ordinary stop/update. If the container was removed by `down`,
-use `docker compose create` before the stopped-container copy/restore workflow.
+#### macOS and Linux
+
+From the repository root, with Docker Compose and Perl with its standard `JSON::PP`
+module installed, run the
+following using the same Compose environment, project name, `.env`, and overrides
+as the application. The helper resolves and displays the production Compose project
+and actual volume name, including explicit or external names; it rejects altered
+database paths, subpaths, and overlapping mounts. Check the displayed identity.
+It stops both `dev` and `app` in that project, checks for **any running container**
+mounting the volume, and leaves both services stopped. A stopped `dev` or `app`
+container must exist to supply its image, so dev-only installations work. If both
+containers were removed, start and stop the app first. No volume is removed.
+
+Before proceeding, ensure no task, direct Compose command, other Docker client, or
+host process can start a writer until maintenance finishes. The volume checks are
+point-in-time checks and cannot prevent concurrent writers or external volume access;
+the shell helper does not acquire the Windows task lock.
+
+```sh
+# Destination must not exist; keep backups outside the repository.
+sh scripts/database-maintenance.sh backup ../backlog-container-backup
+```
+
+The backup includes the whole directory and any SQLite sidecars. Before restoring,
+inspect it and confirm `backlog.sqlite` is at its root, with sidecars alongside it.
+First make a **separate** backup of the current data with a different new path.
+Then the following destructive restore clears the volume, copies the saved directory,
+and sets ownership to UID/GID 1000. A failed restore can leave partial data; retain
+the separate backup. Start the desired service explicitly after maintenance.
+
+```sh
+# Use the exact volume name printed by the backup command.
+BACKLOG_MAINTENANCE_VOLUME='actual-volume-name' sh scripts/database-maintenance.sh restore ../backlog-container-backup
+```
+
+Never copy a live database or mix files from different backups.
 
 ## Native verification commands
 
@@ -328,8 +388,9 @@ npm start
 
 The root `npm run dev` command points the development proxy at `PORT` automatically.
 The frontend-only Vite configuration targets port 3001. Native API binding defaults
-to `127.0.0.1`; leave `BACKLOG_HOST` unset for native development. Vite always binds
-to loopback. Use the exact addresses shown above; this app is intended for access
+to `127.0.0.1`; leave `BACKLOG_HOST` unset for native development. Native Vite binds
+to loopback; Docker Vite listens inside its container and publishes only to host loopback.
+Use the exact addresses shown above; this app is intended for access
 from the same machine.
 
 ## API and implementation
