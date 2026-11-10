@@ -1,4 +1,6 @@
 import { statuses, type Project, type Status, type Task } from '../types';
+import { CalendarDays, Check, Minus, Pencil } from 'lucide-react';
+import { Icon } from './Icon';
 
 function dueLabel(date: string) {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${date}T12:00:00`));
@@ -25,11 +27,11 @@ export function TaskBoard({ tasks, projects, pendingIds, onEdit, onMove, filtere
               <div className="card-top"><span className={`priority priority-${task.priority}`}>{task.priority} priority</span><span className="project-tag" title={project?.name}>{project?.name ?? 'Project'}</span></div>
               <h3><button className="task-title" disabled={pendingIds.has(task.id)} onClick={() => onEdit(task)}>{task.title}</button></h3>
               {task.description && <p className="task-description">{task.description}</p>}
-              {task.dueDate && <p className={`due-date ${overdue ? 'overdue' : ''}`}><span aria-hidden="true">▤</span> {overdue ? 'Overdue · ' : 'Due '}{dueLabel(task.dueDate)}</p>}
-              <div className="card-footer"><label className="sr-only" htmlFor={`status-${task.id}`}>Status for {task.title}</label><select id={`status-${task.id}`} className="status-select" value={task.status} aria-disabled={pendingIds.has(task.id)} onChange={event => { if (!pendingIds.has(task.id)) onMove(task, event.target.value as Status); }}>{statuses.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><button className="text-button edit-task" disabled={pendingIds.has(task.id)} onClick={() => onEdit(task)} aria-label={`Edit task: ${task.title}`}>Edit <span aria-hidden="true">↗</span></button></div>
+              {task.dueDate && <p className={`due-date ${overdue ? 'overdue' : ''}`}><Icon icon={CalendarDays} /> {overdue ? 'Overdue · ' : 'Due '}{dueLabel(task.dueDate)}</p>}
+              <div className="card-footer"><label className="sr-only" htmlFor={`status-${task.id}`}>Status for {task.title}</label><select id={`status-${task.id}`} className="status-select" value={task.status} aria-disabled={pendingIds.has(task.id)} onChange={event => { if (!pendingIds.has(task.id)) onMove(task, event.target.value as Status); }}>{statuses.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><button className="text-button edit-task" disabled={pendingIds.has(task.id)} onClick={() => onEdit(task)} aria-label={`Edit task: ${task.title}`}>Edit <Icon icon={Pencil} /></button></div>
             </article>;
           })}
-          {columnTasks.length === 0 && <div className="column-empty"><span aria-hidden="true">{status.value === 'done' ? '✓' : '·'}</span><p>{filtered ? 'No matching tasks' : status.value === 'done' ? 'Good things take a few steps.' : status.value === 'in_progress' ? 'Ready when you are.' : 'Room for your next idea.'}</p></div>}
+          {columnTasks.length === 0 && <div className="column-empty"><span aria-hidden="true"><Icon icon={status.value === 'done' ? Check : Minus} /></span><p>{filtered ? 'No matching tasks' : status.value === 'done' ? 'Good things take a few steps.' : status.value === 'in_progress' ? 'Ready when you are.' : 'Room for your next idea.'}</p></div>}
         </div>
       </section>;
     })}

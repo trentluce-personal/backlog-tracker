@@ -9,9 +9,11 @@ services:
       BACKLOG_HOST: 127.0.0.1
       PORT: "3001"
       BACKLOG_DB_PATH: /app/data/backlog.sqlite
+      BACKLOG_MODEL_PATH: /app/models/model.json
       BACKLOG_DOCKER_DEV: "1"
     volumes:
       - backlog-data:/app/data
+      - ./data/models:/app/models
       - ./apps/api/src:/app/apps/api/src:ro
       - ./apps/web:/source/web:ro
       - ./apps/web/src:/app/apps/web/src:ro

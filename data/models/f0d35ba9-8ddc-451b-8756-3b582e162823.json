@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "nodes": [
+    {
+      "id": "node-0",
+      "name": "SourceSystemIdentifier",
+      "x": 320,
+      "y": 200,
+      "classification": "Master Data",
+      "draft": false,
+      "properties": []
+    },
+    {
+      "id": "node-1",
+      "name": "SourceSystem",
+      "x": 640,
+      "y": 200,
+      "classification": "Transactional",
+      "draft": false,
+      "properties": [
+        {
+          "name": "identifier",
+          "dataType": "STRING",
+          "description": "",
+          "nodeKey": true,
+          "uniqueness": false,
+          "mustExist": false,
+          "index": "None"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "relationship-2",
+      "name": "IDENTIFIER_SYSTEM_IS",
+      "source": "node-0",
+      "target": "node-1"
+    }
+  ],
+  "revision": 1,
+  "name": "Source System Identifier"
+}

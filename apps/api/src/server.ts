@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openStore } from './store.ts';
+import { openModelStore, openNamedModelStore } from './model-store.ts';
 import { HttpError, id, projectInput, taskInput } from './validation.ts';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -17,7 +18,7 @@ function json(response: ServerResponse, status: number, body?: unknown) {
   response.end(body === undefined ? undefined : JSON.stringify(body));
 }
 
-async function body(request: IncomingMessage): Promise<unknown> {
+async function body(request: IncomingMessage, limit = 32768): Promise<unknown> {
   if (request.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') {
     throw new HttpError(400, 'Content-Type must be application/json.');
   }
@@ -25,7 +26,7 @@ async function body(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     length += chunk.length;
-    if (length > 32768) throw new HttpError(400, 'Request body is too large.');
+    if (length > limit) throw new HttpError(400, 'Request body is too large.');
     chunks.push(Buffer.from(chunk));
   }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
@@ -45,8 +46,11 @@ function protect(request: IncomingMessage) {
   }
 }
 
-export function createApp(options: { dbPath: string; webRoot?: string }) {
+export function createApp(options: { dbPath: string; modelPath?: string; webRoot?: string }) {
   const store = openStore(options.dbPath);
+  const modelPath = options.modelPath ?? resolve(root, 'data/models/model.json');
+  const modelStore = openModelStore(modelPath);
+  const namedModelStore = openNamedModelStore(modelPath);
   const webRoot = resolve(options.webRoot ?? resolve(root, 'apps/web/dist'));
   const server = createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -55,6 +59,29 @@ export function createApp(options: { dbPath: string; webRoot?: string }) {
       protect(request);
       const url = new URL(request.url || '/', 'http://localhost');
       const method = request.method;
+      if (url.pathname === '/api/model-node-definitions' && method === 'GET') {
+        return json(response, 200, { models: await namedModelStore.definitions() });
+      }
+      if (url.pathname === '/api/model') {
+        if (method === 'GET') return json(response, 200, { model: await modelStore.read() });
+        if (method === 'PUT') return json(response, 200, { model: await modelStore.save(await body(request, 512 * 1024)) });
+      }
+      if (url.pathname === '/api/models') {
+        if (method === 'GET') return json(response, 200, { models: await namedModelStore.list() });
+        if (method === 'POST') return json(response, 201, await namedModelStore.create(await body(request, 512 * 1024)));
+      }
+      const modelMatch = /^\/api\/models\/([^/]+)$/.exec(url.pathname);
+      if (modelMatch) {
+        const modelId = modelMatch[1]!;
+        if (method === 'GET') return json(response, 200, await namedModelStore.read(modelId));
+        if (method === 'DELETE') {
+          await namedModelStore.delete(modelId, await body(request));
+          return json(response, 204);
+        }
+        if (method === 'PUT' && modelId !== 'legacy') {
+          return json(response, 200, await namedModelStore.save(modelId, await body(request, 512 * 1024)));
+        }
+      }
       if (url.pathname === '/api/projects') {
         if (method === 'GET') return json(response, 200, { projects: store.projects() });
         if (method === 'POST') return json(response, 201, { project: store.createProject(projectInput(await body(request))) });
@@ -107,7 +134,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer from 1 to 65535.');
   const host = process.env.BACKLOG_HOST ?? '127.0.0.1';
   if (!['127.0.0.1', '0.0.0.0'].includes(host)) throw new Error('BACKLOG_HOST must be 127.0.0.1 or 0.0.0.0.');
-  const server = createApp({ dbPath: process.env.BACKLOG_DB_PATH ? resolve(process.env.BACKLOG_DB_PATH) : resolve(root, 'data/backlog.sqlite') });
+  const server = createApp({
+    dbPath: process.env.BACKLOG_DB_PATH ? resolve(process.env.BACKLOG_DB_PATH) : resolve(root, 'data/backlog.sqlite'),
+    modelPath: process.env.BACKLOG_MODEL_PATH ? resolve(process.env.BACKLOG_MODEL_PATH) : resolve(root, 'data/models/model.json'),
+  });
   server.on('error', (error) => { console.error(error.message); server.close(); process.exitCode = 1; });
   server.listen(port, host, () => {
     console.log(`The Forge listening at http://${host}:${port}`);

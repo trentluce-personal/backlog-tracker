@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight, CircleAlert, Columns3, FolderOpen, LayoutDashboard, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Search } from 'lucide-react';
+import { Icon } from './components/Icon';
 import { api } from './api';
 import { DeleteConfirmation, ProjectForm, TaskForm } from './components/Forms';
 import { TaskBoard } from './components/TaskBoard';
 import { AppearanceControls } from './components/AppearanceControls';
-import { DataModeling } from './components/DataModeling';
+import { DataModeling, type ModelNavigation } from './components/DataModeling';
+import { Models } from './components/Models';
+import { Dialog } from './components/Dialog';
+import { useModelPersistence } from './components/useModelPersistence';
 import { useButtonRipples } from './ripple';
 import { priorities, statuses, type Priority, type Project, type Status, type Task } from './types';
 
@@ -19,6 +24,12 @@ export function App() {
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [workspace, setWorkspace] = useState<'backlog' | 'data-modeling'>('backlog');
+  const [navigationCollapsed, setNavigationCollapsed] = useState(false);
+  const modelPersistence = useModelPersistence();
+  const modelNavigation = useRef<ModelNavigation | null>(null);
+  const [modelsRefresh, setModelsRefresh] = useState(0);
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const modelsTrigger = useRef<HTMLButtonElement>(null);
   const [modelDialog, setModelDialog] = useState<'node' | 'relationship' | null>(null);
   const [projectId, setProjectId] = useState('all');
   const [search, setSearch] = useState('');
@@ -65,7 +76,13 @@ export function App() {
   const complete = scopedTasks.filter(task => task.status === 'done').length;
   function clearFilters() { setSearch(''); setStatus('all'); setPriority('all'); }
   function navigateWorkspace(next: 'backlog' | 'data-modeling') {
-    if (!editor && !deletion && !modelDialog) setWorkspace(next);
+    if (!editor && !deletion && !modelDialog && !modelsOpen && modelNavigation.current?.canNavigate()) setWorkspace(next);
+  }
+  async function openModel(id: string) {
+    if (await modelNavigation.current?.openFromBrowser(id)) { setWorkspace('data-modeling'); setModelsOpen(false); }
+  }
+  function newModel() {
+    if (modelNavigation.current?.newFromBrowser()) { setWorkspace('data-modeling'); setModelsOpen(false); }
   }
   function openEditor(value: Editor) { setNotice(''); setActionError(''); setEditor(value); }
   function savedProject(project: Project) {
@@ -109,42 +126,46 @@ export function App() {
   }
   return <>
     <a href="#main" className="skip-link">Skip to workspace</a>
-    <div className="app-shell">
-      <aside className="sidebar" aria-label="Workspace navigation">
+    <div className={`app-shell${workspace === 'data-modeling' ? ' app-shell-modeling' : ''}${navigationCollapsed ? ' navigation-collapsed' : ''}`}>
+      <aside id="workspace-navigation" className="sidebar" aria-label="Workspace navigation">
         <div className="brand"><img className="brand-mark" src="/forge-logo.svg" alt="" /><div className="brand-wordmark"><span>The</span> Forge</div></div>
         <AppearanceControls />
         <nav className="project-nav" aria-label="General navigation">
           <div className="sidebar-section-heading"><h2>General</h2></div>
-          <button className={`nav-item ${workspace === 'backlog' ? 'active' : ''}`} aria-current={workspace === 'backlog' ? 'page' : undefined} onClick={() => navigateWorkspace('backlog')}><span className="nav-symbol" aria-hidden="true">▦</span><span>Backlog</span><span className="nav-count">{tasks.length}</span></button>
-          <button className={`nav-item ${workspace === 'data-modeling' ? 'active' : ''}`} aria-current={workspace === 'data-modeling' ? 'page' : undefined} onClick={() => navigateWorkspace('data-modeling')}><span className="nav-symbol" aria-hidden="true">◇</span><span>Data Modeling</span></button>
+           <button className={`nav-item ${workspace === 'backlog' ? 'active' : ''}`} aria-label="Backlog" title="Backlog" aria-current={workspace === 'backlog' ? 'page' : undefined} onClick={() => navigateWorkspace('backlog')}><Icon icon={LayoutDashboard} /><span>Backlog</span><span className="nav-count">{tasks.length}</span></button>
+           <button className={`nav-item ${workspace === 'data-modeling' ? 'active' : ''}`} aria-label="Data Modeling" title="Data Modeling" aria-current={workspace === 'data-modeling' ? 'page' : undefined} onClick={() => navigateWorkspace('data-modeling')}><Icon icon={Network} /><span>Data Modeling</span></button>
         </nav>
+        <button className="icon-button navigation-toggle" aria-label={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!navigationCollapsed} aria-controls="workspace-navigation" disabled={Boolean(editor || deletion || modelDialog || modelsOpen) || modelPersistence.saving || modelPersistence.creating || modelPersistence.deleting} onClick={() => { if (modelNavigation.current?.canNavigate()) setNavigationCollapsed(value => !value); }}><Icon icon={navigationCollapsed ? PanelLeftOpen : PanelLeftClose} /></button>
       </aside>
-      <main id="main" className="workspace">
+      <main id="main" className={`workspace${workspace === 'data-modeling' ? ' workspace-modeling' : ''}`}>
         <div hidden={workspace !== 'backlog'}>
-        <header className="workspace-header"><div><p className="eyebrow">A LITTLE CLARITY, EVERY DAY</p><h1 id="workspace-title" tabIndex={-1}>{selectedProject?.name ?? 'Backlog'}</h1><p className="workspace-subtitle">{selectedProject ? 'Your ideas, next steps, and small wins. All in one place.' : 'Big ideas. Small steps. A little more room to focus.'}</p></div><button className="button primary new-task" disabled={loading || Boolean(loadError)} onClick={() => openEditor(projects.length ? { kind: 'task' } : { kind: 'project' })}><span aria-hidden="true">＋</span> {projects.length ? 'New task' : 'Create project'}</button></header>
+        <header className="workspace-header"><div><p className="eyebrow">A LITTLE CLARITY, EVERY DAY</p><h1 id="workspace-title" tabIndex={-1}>{selectedProject?.name ?? 'Backlog'}</h1><p className="workspace-subtitle">{selectedProject ? 'Your ideas, next steps, and small wins. All in one place.' : 'Big ideas. Small steps. A little more room to focus.'}</p></div><button className="button primary new-task" disabled={loading || Boolean(loadError)} onClick={() => openEditor(projects.length ? { kind: 'task' } : { kind: 'project' })}><Icon icon={Plus} /> {projects.length ? 'New task' : 'Create project'}</button></header>
         <div className="workspace-summary"><span><strong>{scopedTasks.filter(task => task.status !== 'done').length}</strong> open tasks</span><span className="summary-divider" /><span><strong>{complete}</strong> completed</span><div className="progress-track" role="progressbar" aria-label="Tasks completed" aria-valuenow={complete} aria-valuemin={0} aria-valuemax={scopedTasks.length || 1}><span style={{ width: `${scopedTasks.length ? complete / scopedTasks.length * 100 : 0}%` }} /></div></div>
         <section className="toolbar" aria-label="Search and filter tasks">
-          <div className="search-field"><span aria-hidden="true">⌕</span><label htmlFor="search" className="sr-only">Search tasks and descriptions</label><input id="search" type="search" placeholder="Search your tasks…" value={search} onChange={event => setSearch(event.target.value)} /></div>
+          <div className="search-field"><Icon icon={Search} /><label htmlFor="search" className="sr-only">Search tasks and descriptions</label><input id="search" type="search" placeholder="Search your tasks…" value={search} onChange={event => setSearch(event.target.value)} /></div>
           <div className="filter-field"><label htmlFor="project-filter">Project</label><select id="project-filter" value={projectId} onChange={event => setProjectId(event.target.value)}><option value="all">All projects</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
           <div className="filter-field"><label htmlFor="status-filter">Status</label><select id="status-filter" value={status} onChange={event => setStatus(event.target.value as Status | 'all')}><option value="all">All statuses</option>{statuses.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div>
           <div className="filter-field"><label htmlFor="priority-filter">Priority</label><select id="priority-filter" value={priority} onChange={event => setPriority(event.target.value as Priority | 'all')}><option value="all">All priorities</option>{priorities.map(item => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select></div>
         </section>
         <div className="project-actions" aria-label="Project management">
-          <button className="text-button" disabled={loading || Boolean(loadError)} onClick={() => openEditor({ kind: 'project' })}><span aria-hidden="true">＋</span> New project</button>
+          <button className="text-button" disabled={loading || Boolean(loadError)} onClick={() => openEditor({ kind: 'project' })}><Icon icon={Plus} /> New project</button>
           {selectedProject && <button className="text-button" aria-label={`Edit project: ${selectedProject.name}`} disabled={loading || Boolean(loadError)} onClick={() => openEditor({ kind: 'project', project: selectedProject })}>Edit selected project</button>}
         </div>
-        <div className="board-meta"><span>{loading ? 'Your workspace' : `${visibleTasks.length} ${visibleTasks.length === 1 ? 'task' : 'tasks'}${filtered ? ' matching filters' : ' in view'}`}</span>{filtered && <button className="text-button" onClick={clearFilters}>Clear filters</button>}<span className="view-label"><span aria-hidden="true">▥</span> Board view</span></div>
+        <div className="board-meta"><span>{loading ? 'Your workspace' : `${visibleTasks.length} ${visibleTasks.length === 1 ? 'task' : 'tasks'}${filtered ? ' matching filters' : ' in view'}`}</span>{filtered && <button className="text-button" onClick={clearFilters}>Clear filters</button>}<span className="view-label"><Icon icon={Columns3} /> Board view</span></div>
         <div className="announcement" role="status">{notice}</div>
         {actionError && <div className="error-banner" role="alert"><p>{actionError} Your task hasn’t changed. Select a status to retry.</p><button className="text-button" onClick={() => setActionError('')}>Dismiss</button></div>}
-        {loading ? <div className="state-panel" role="status"><span className="state-symbol" aria-hidden="true">···</span><h2>Opening your workspace</h2><p>Gathering your projects and next steps…</p></div>
-          : loadError ? <div className="state-panel error-state" role="alert"><span className="state-symbol" aria-hidden="true">!</span><h2>Let’s reconnect</h2><p>{loadError}</p><button className="button primary" onClick={() => void load()}>Try again</button></div>
-          : projects.length === 0 ? <div className="state-panel welcome"><span className="welcome-art" aria-hidden="true">▤<span>＋</span></span><p className="eyebrow">A FRESH START</p><h2>Good things start with an idea.</h2><p>Give it a home. Create a project, add your first task,<br className="desktop-break" /> and take it one small step at a time.</p><button className="button primary" onClick={() => openEditor({ kind: 'project' })}><span aria-hidden="true">＋</span> Create your first project</button></div>
-          : <><TaskBoard tasks={visibleTasks} projects={projects} pendingIds={pendingIds} onEdit={task => openEditor({ kind: 'task', task })} onMove={(task, status) => void moveTask(task, status)} filtered={filtered} />{!filtered && scopedTasks.length === 0 && <div className="board-nudge"><p>Your project has room to grow.</p><button className="text-button" onClick={() => openEditor({ kind: 'task' })}>Create your first task <span aria-hidden="true">→</span></button></div>}{filtered && visibleTasks.length === 0 && <div className="board-nudge"><p>No tasks match these filters.</p><button className="text-button" onClick={clearFilters}>Clear filters</button></div>}</>}
+        {loading ? <div className="state-panel" role="status"><span className="state-symbol" aria-hidden="true"><Icon icon={LoaderCircle} /></span><h2>Opening your workspace</h2><p>Gathering your projects and next steps…</p></div>
+          : loadError ? <div className="state-panel error-state" role="alert"><span className="state-symbol" aria-hidden="true"><Icon icon={CircleAlert} /></span><h2>Let’s reconnect</h2><p>{loadError}</p><button className="button primary" onClick={() => void load()}>Try again</button></div>
+          : projects.length === 0 ? <div className="state-panel welcome"><span className="welcome-art" aria-hidden="true"><Icon icon={FolderOpen} /><span><Icon icon={Plus} /></span></span><p className="eyebrow">A FRESH START</p><h2>Good things start with an idea.</h2><p>Give it a home. Create a project, add your first task,<br className="desktop-break" /> and take it one small step at a time.</p><button className="button primary" onClick={() => openEditor({ kind: 'project' })}><Icon icon={Plus} /> Create your first project</button></div>
+          : <><TaskBoard tasks={visibleTasks} projects={projects} pendingIds={pendingIds} onEdit={task => openEditor({ kind: 'task', task })} onMove={(task, status) => void moveTask(task, status)} filtered={filtered} />{!filtered && scopedTasks.length === 0 && <div className="board-nudge"><p>Your project has room to grow.</p><button className="text-button" onClick={() => openEditor({ kind: 'task' })}>Create your first task <Icon icon={ArrowRight} /></button></div>}{filtered && visibleTasks.length === 0 && <div className="board-nudge"><p>No tasks match these filters.</p><button className="text-button" onClick={clearFilters}>Clear filters</button></div>}</>}
         <footer className="workspace-footer">A quieter place to get things done.<span>No rush. Just your next step.</span></footer>
         </div>
-        <div hidden={workspace !== 'data-modeling'}><DataModeling active={workspace === 'data-modeling'} dialog={modelDialog} setDialog={setModelDialog} /></div>
+        <div className="modeling-workspace" hidden={workspace !== 'data-modeling'}><DataModeling active={workspace === 'data-modeling'} browserOpen={modelsOpen} browseButton={modelsTrigger} onBrowse={() => { if (modelNavigation.current?.canNavigate()) setModelsOpen(true); }} dialog={modelDialog} setDialog={setModelDialog} persistence={modelPersistence} navigation={modelNavigation} onSaved={() => setModelsRefresh(value => value + 1)} /></div>
       </main>
     </div>
+    {modelsOpen && <Dialog title="All Models" returnFocusRef={modelsTrigger} busy={modelPersistence.saving || modelPersistence.deleting || modelPersistence.phase === 'loading'} onClose={() => { if (!modelPersistence.busy.current) setModelsOpen(false); }}>
+      <Models active refresh={modelsRefresh} currentId={modelPersistence.id} busy={modelPersistence.saving || modelPersistence.deleting || modelPersistence.phase === 'loading'} deleting={modelPersistence.deleting} openError={modelPersistence.failedLoadId ? modelPersistence.error : ''} onOpen={id => void openModel(id)} onNew={newModel} onDelete={model => modelNavigation.current?.deleteFromBrowser(model) ?? Promise.resolve(false)} />
+    </Dialog>}
     {editor?.kind === 'project' && <ProjectForm project={editor.project} onClose={() => setEditor(null)} onSave={savedProject} onDelete={() => editor.project && setDeletion({ kind: 'project', project: editor.project })} />}
     {editor?.kind === 'task' && <TaskForm task={editor.task} projects={projects} initialProjectId={selectedProject?.id ?? projects[0]?.id ?? ''} onClose={() => setEditor(null)} onSave={savedTask} onDelete={() => editor.task && setDeletion({ kind: 'task', task: editor.task })} />}
     {deletion && <DeleteConfirmation kind={deletion.kind} name={deletion.kind === 'project' ? deletion.project.name : deletion.task.title} taskCount={deletion.kind === 'project' ? tasks.filter(task => task.projectId === deletion.project.id).length : undefined} onClose={() => setDeletion(null)} onConfirm={confirmDelete} />}

@@ -1,0 +1,47 @@
+.node-properties { min-width: 0; margin-top: 24px; }
+.node-properties-heading { margin-bottom: 10px; }
+.node-properties-heading h3 { margin: 0; font-size: 14px; }
+.node-properties button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--control-border); border-radius: 6px; background: var(--control); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.node-properties button:hover:not(:disabled) { background: var(--selected); border-color: var(--accent); }
+.node-properties-scroll { max-width: 100%; overflow-x: scroll; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 6px; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: var(--muted) var(--column); }
+/* Explicit sizing keeps the native bar visible with macOS overlay scrollbars. */
+@supports selector(::-webkit-scrollbar) {
+  .node-properties-scroll { scrollbar-color: auto; }
+  .node-properties-scroll::-webkit-scrollbar { height: 14px; }
+  .node-properties-scroll::-webkit-scrollbar-track { background: var(--column); }
+  .node-properties-scroll::-webkit-scrollbar-thumb { min-width: 32px; border: 3px solid var(--column); border-radius: 7px; background: var(--muted); }
+  .node-properties-scroll::-webkit-scrollbar-thumb:hover { background: var(--text); }
+}
+.node-properties table { width: max-content; table-layout: auto; border-collapse: collapse; font-size: 13px; }
+.node-properties th, .node-properties td { padding: 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+.node-properties th { background: var(--column); font-weight: 600; white-space: nowrap; }
+.node-properties tr:last-child td { border-bottom: 0; }
+.node-properties input[type=text], .node-properties textarea, .node-properties select { box-sizing: border-box; min-height: 44px; padding: 10px; border: 1px solid var(--control-border); border-radius: 4px; color: var(--text); background: var(--control); font: inherit; font-size: 13px; }
+/* The mirror supplies intrinsic width independently of the native control's
+   default input size or longest unselected option. CSS also tracks font changes. */
+.node-property-sized-control { position: relative; display: inline-block; vertical-align: top; font-size: 13px; }
+.node-property-control-measure { display: block; box-sizing: border-box; min-width: 44px; min-height: 44px; padding: 10px; border: 1px solid transparent; visibility: hidden; white-space: pre; }
+.node-properties .node-property-sized-control > :is(input, select) { position: absolute; inset: 0; width: 100%; min-width: 0; }
+.node-property-sized-select .node-property-control-measure { padding-right: 36px; }
+.node-properties .node-property-sized-select > select { appearance: none; padding-right: 36px; }
+.node-property-sized-select > svg { position: absolute; right: 10px; top: 14px; width: 16px; height: 16px; pointer-events: none; color: var(--muted); }
+.node-properties textarea { width: 100%; min-width: 0; resize: vertical; }
+.node-properties td > .modeling-error { contain: inline-size; white-space: normal; overflow-wrap: anywhere; }
+.node-properties [aria-invalid=true] { border-color: var(--error); }
+.node-property-check { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; cursor: pointer; }
+.node-property-check input[type=checkbox] { width: 20px; height: 20px; min-height: 20px; margin: 0; accent-color: var(--accent); }
+.node-property-text { white-space: pre; }
+.node-property-description { margin-top: 6px; }
+.node-property-description summary { display: list-item; min-height: 44px; align-content: center; cursor: pointer; color: var(--muted); white-space: nowrap; }
+.node-property-description[open] summary { margin-bottom: 6px; }
+.node-property-description-body { contain: inline-size; }
+.node-property-description-body .node-property-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.node-property-actions { white-space: nowrap; }
+.node-property-actions button { display: block; width: 100%; }
+.node-property-actions button + button { margin-top: 8px; }
+.node-properties-add-row td { border-right: 0; }
+.node-property-add-action { position: sticky; right: 0; background: var(--surface); }
+.node-properties .node-property-add-action button,
+.node-properties .node-property-add-action button:is(:hover, :active, :focus) { display: inline-flex; align-items: center; gap: 6px; width: auto; min-width: 44px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--muted); }
+.node-properties :is(button, input, textarea, select, summary, .node-properties-scroll):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.node-properties :is(button, input, textarea, select, summary) { scroll-margin-block: 6px; }

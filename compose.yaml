@@ -7,8 +7,10 @@ services:
       BACKLOG_HOST: 0.0.0.0
       PORT: "3001"
       BACKLOG_DB_PATH: /app/data/backlog.sqlite
+      BACKLOG_MODEL_PATH: /app/models/model.json
     volumes:
       - backlog-data:/app/data
+      - ./data/models:/app/models
     stop_grace_period: 20s
 
 volumes:

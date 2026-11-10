@@ -13,7 +13,8 @@ import { createApp } from '../src/server.ts';
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'backlog-api-test-'));
   const dbPath = join(directory, 'test.sqlite');
-  let server = createApp({ dbPath, webRoot: directory });
+  const modelPath = join(directory, 'model.json');
+  let server = createApp({ dbPath, modelPath, webRoot: directory });
   let base = '';
   async function start() {
     server.listen(0, '127.0.0.1');
@@ -33,7 +34,7 @@ async function fixture(t: TestContext) {
   return {
     directory,
     origin: () => base,
-    async restart() { await close(); server = createApp({ dbPath, webRoot: directory }); await start(); },
+    async restart() { await close(); server = createApp({ dbPath, modelPath, webRoot: directory }); await start(); },
     async request(path: string, method = 'GET', body?: unknown, headers?: Record<string, string>) {
       if (headers?.Host) {
         return new Promise<{ status: number; data: any; headers: unknown }>((resolve, reject) => {
@@ -250,7 +251,7 @@ for (const host of [undefined, '0.0.0.0']) test(`standalone Node entrypoint (${h
   const entry = fileURLToPath(new URL('../src/server.ts', import.meta.url));
   async function start() {
     output = '';
-    const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(port), BACKLOG_DB_PATH: join(directory, 'isolated.sqlite') };
+    const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(port), BACKLOG_DB_PATH: join(directory, 'isolated.sqlite'), BACKLOG_MODEL_PATH: join(directory, 'isolated.model.json') };
     delete env.BACKLOG_HOST;
     if (host) env.BACKLOG_HOST = host;
     child = spawn(process.execPath, [entry], {
@@ -285,8 +286,23 @@ for (const host of [undefined, '0.0.0.0']) test(`standalone Node entrypoint (${h
   });
   assert.equal(response.status, 201);
   const { project } = await response.json();
+  assert.deepEqual(await (await fetch(base + '/api/model')).json(), { model: { schemaVersion: 2, revision: 0, nodes: [], relationships: [] } });
+  const savedModel = { schemaVersion: 1, nodes: [{ id: 'node-1', name: 'Standalone', x: 60, y: 60 }],
+    relationships: [{ id: 'relationship-1', name: 'KNOWS', source: 'node-1', target: 'node-1' }] };
+  const saved = await fetch(base + '/api/model', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ expectedRevision: 0, model: savedModel }),
+  });
+  assert.equal(saved.status, 200);
+  const normalizedModel = {
+    ...savedModel, schemaVersion: 2, revision: 1,
+    nodes: savedModel.nodes.map(node => ({ ...node, kind: 'definition', classification: 'Transactional', draft: false, properties: [] })),
+    relationships: savedModel.relationships.map(edge => ({ ...edge, sourceCardinality: '0..*', targetCardinality: '0..*' })),
+  };
+  assert.deepEqual(await saved.json(), { model: normalizedModel });
   await stop();
   await start();
+  assert.deepEqual(await (await fetch(base + '/api/model')).json(), { model: normalizedModel });
   assert.deepEqual(await (await fetch(base + '/api/projects')).json(), { projects: [project] });
   assert.equal((await fetch(base + `/api/projects/${project.id}`, {
     method: 'DELETE', headers: { Origin: 'https://example.com' },

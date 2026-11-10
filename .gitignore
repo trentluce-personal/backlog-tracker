@@ -1,6 +1,11 @@
 node_modules/
 dist/
-data/
+# Track only model JSON directly inside data/models; keep runtime data private.
+data/*
+!data/models/
+data/models/*
+!data/models/*.json
+data/models/*/
 artifacts/
 .playwright-cli/
 *.tsbuildinfo

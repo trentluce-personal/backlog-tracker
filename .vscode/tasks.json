@@ -4,8 +4,13 @@
     {
       "label": "Start application",
       "type": "process",
-      "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Start"],
+      "command": "/bin/sh",
+      "args": ["${workspaceFolder}/scripts/application.sh", "Start"],
+      "windows": {
+        "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Start"]
+      },
+      "osx": { "command": "/bin/sh", "args": ["${workspaceFolder}/scripts/application.sh", "Start"] },
       "options": { "cwd": "${workspaceFolder}" },
       "runOptions": { "instanceLimit": 1 },
       "problemMatcher": []
@@ -13,8 +18,13 @@
     {
       "label": "Stop application",
       "type": "process",
-      "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Stop"],
+      "command": "/bin/sh",
+      "args": ["${workspaceFolder}/scripts/application.sh", "Stop"],
+      "windows": {
+        "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Stop"]
+      },
+      "osx": { "command": "/bin/sh", "args": ["${workspaceFolder}/scripts/application.sh", "Stop"] },
       "options": { "cwd": "${workspaceFolder}" },
       "runOptions": { "instanceLimit": 1 },
       "problemMatcher": []
@@ -22,8 +32,13 @@
     {
       "label": "Restart application",
       "type": "process",
-      "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Restart"],
+      "command": "/bin/sh",
+      "args": ["${workspaceFolder}/scripts/application.sh", "Restart"],
+      "windows": {
+        "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Restart"]
+      },
+      "osx": { "command": "/bin/sh", "args": ["${workspaceFolder}/scripts/application.sh", "Restart"] },
       "options": { "cwd": "${workspaceFolder}" },
       "runOptions": { "instanceLimit": 1 },
       "problemMatcher": []
@@ -31,8 +46,13 @@
     {
       "label": "View application logs",
       "type": "process",
-      "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Logs"],
+      "command": "/bin/sh",
+      "args": ["${workspaceFolder}/scripts/application.sh", "Logs"],
+      "windows": {
+        "command": "${env:SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\application.ps1", "-Action", "Logs"]
+      },
+      "osx": { "command": "/bin/sh", "args": ["${workspaceFolder}/scripts/application.sh", "Logs"] },
       "options": { "cwd": "${workspaceFolder}" },
       "runOptions": { "instanceLimit": 1 },
       "problemMatcher": []
