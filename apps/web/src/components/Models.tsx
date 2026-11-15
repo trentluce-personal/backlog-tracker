@@ -56,7 +56,7 @@ export function Models({ active, refresh, currentId, busy, deleting, openError, 
       : error ? <div className="state-panel" role="alert"><h2>Could not load models</h2><p>{error}</p><button className="button secondary" onClick={() => setRetry(value => value + 1)}>Retry loading models</button></div>
         : !models.length ? <div className="state-panel"><h2>No models yet</h2></div>
            : <ul className="models-list">{models.map(model => <li key={model.id} className="model-row" aria-current={model.id === currentId ? 'true' : undefined}>
-            <div><h2>{model.name}</h2><p>{model.id === currentId ? 'Current model · ' : ''}{model.available ? `Revision ${model.revision}` : 'Unavailable'}</p>
+            <div><h3>{model.name}</h3><p>{model.id === currentId ? 'Current model · ' : ''}{model.available ? `Revision ${model.revision}` : 'Unavailable'}</p>
               {!model.available && <p className="model-card-error">{model.error} Check the stored file, then refresh models to retry.</p>}</div>
              <div className="model-row-actions">
                {model.available && model.deletable && <button className="icon-button model-delete" title={`Delete ${model.name} (${model.id})`} aria-label={`Delete model ${model.name} (${model.id})${model.id === currentId ? ', current model' : ''}`} disabled={busy} onClick={() => void remove(model)}><Icon icon={Trash2} /></button>}

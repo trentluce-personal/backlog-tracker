@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import { assert } from './expected-v3.ts';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

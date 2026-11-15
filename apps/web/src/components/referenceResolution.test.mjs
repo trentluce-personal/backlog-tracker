@@ -3,8 +3,8 @@ import test from 'node:test';
 import { resolveReference } from './referenceResolution.ts';
 
 const reference = { kind: 'reference', classification: 'External Reference', target: { modelId: 'target', nodeId: 'node-0' } };
-const definition = { kind: 'definition', id: 'node-0', name: 'Catalog', properties: [] };
-const catalog = [{ id: 'target', name: 'Target', available: true, definitions: [definition] }];
+const definition = { kind: 'definition', id: 'node-0', name: 'Catalog', classification: 'Transactional', draft: false, properties: [], impliedLabels: [] };
+const catalog = [{ id: 'target', name: 'Target', available: true, revision: 1, sourceSchemaVersion: 3, definitions: [definition], relationshipTypes: [], constraints: [], indexes: [] }];
 const resolve = (models, loaded, loading, error = '', stale = false) => resolveReference(reference, 'source', 'Source', [], models, stale, loaded, loading, error);
 
 test('external reference absence is unresolved only after successful discovery', () => {

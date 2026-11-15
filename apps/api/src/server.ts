@@ -4,6 +4,12 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openStore } from './store.ts';
 import { openModelStore, openNamedModelStore } from './model-store.ts';
+import { MODEL_BODY_LIMIT } from './model-schema.ts';
+import { candidate, compose } from './model-validation.ts';
+import { exportModel } from './model-export.ts';
+import { ERD_BODY_LIMIT } from './erd-schema.ts';
+import { openErStore } from './erd-store.ts';
+import { exportErModel } from './erd-export.ts';
 import { HttpError, id, projectInput, taskInput } from './validation.ts';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -51,6 +57,7 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
   const modelPath = options.modelPath ?? resolve(root, 'data/models/model.json');
   const modelStore = openModelStore(modelPath);
   const namedModelStore = openNamedModelStore(modelPath);
+  const erStore = openErStore(modelPath);
   const webRoot = resolve(options.webRoot ?? resolve(root, 'apps/web/dist'));
   const server = createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -59,16 +66,44 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
       protect(request);
       const url = new URL(request.url || '/', 'http://localhost');
       const method = request.method;
+      if (url.pathname === '/api/erd-export' && method === 'POST') {
+        return json(response, 200, exportErModel(await body(request, ERD_BODY_LIMIT)));
+      }
+      if (url.pathname === '/api/erd-models') {
+        if (method === 'GET') return json(response, 200, { models: await erStore.list() });
+        if (method === 'POST') return json(response, 201, await erStore.create(await body(request, ERD_BODY_LIMIT)));
+      }
+      const erMatch = /^\/api\/erd-models\/([^/]+)$/.exec(url.pathname);
+      if (erMatch) {
+        const erId = erMatch[1]!;
+        if (method === 'GET') return json(response, 200, await erStore.read(erId));
+        if (method === 'PUT') return json(response, 200, await erStore.save(erId, await body(request, ERD_BODY_LIMIT)));
+        if (method === 'DELETE') {
+          await erStore.delete(erId, await body(request));
+          return json(response, 204);
+        }
+      }
+      if (url.pathname === '/api/model-catalog' && method === 'GET') {
+        return json(response, 200, { models: await namedModelStore.definitions(true) });
+      }
+      if ((url.pathname === '/api/model-validation' || url.pathname === '/api/model-export') && method === 'POST') {
+        const exporting = url.pathname === '/api/model-export';
+        const input = candidate(await body(request, MODEL_BODY_LIMIT), exporting);
+        const composition = await compose(input, modelPath);
+        if (!exporting) return json(response, 200, composition.validation);
+        const result = exportModel(composition, input.modelId, input.format!, input.acknowledgeGraphTypeReplacement);
+        return json(response, result.status, result.body);
+      }
       if (url.pathname === '/api/model-node-definitions' && method === 'GET') {
         return json(response, 200, { models: await namedModelStore.definitions() });
       }
       if (url.pathname === '/api/model') {
         if (method === 'GET') return json(response, 200, { model: await modelStore.read() });
-        if (method === 'PUT') return json(response, 200, { model: await modelStore.save(await body(request, 512 * 1024)) });
+        if (method === 'PUT') return json(response, 200, { model: await modelStore.save(await body(request, MODEL_BODY_LIMIT)) });
       }
       if (url.pathname === '/api/models') {
         if (method === 'GET') return json(response, 200, { models: await namedModelStore.list() });
-        if (method === 'POST') return json(response, 201, await namedModelStore.create(await body(request, 512 * 1024)));
+        if (method === 'POST') return json(response, 201, await namedModelStore.create(await body(request, MODEL_BODY_LIMIT)));
       }
       const modelMatch = /^\/api\/models\/([^/]+)$/.exec(url.pathname);
       if (modelMatch) {
@@ -79,7 +114,7 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
           return json(response, 204);
         }
         if (method === 'PUT' && modelId !== 'legacy') {
-          return json(response, 200, await namedModelStore.save(modelId, await body(request, 512 * 1024)));
+          return json(response, 200, await namedModelStore.save(modelId, await body(request, MODEL_BODY_LIMIT)));
         }
       }
       if (url.pathname === '/api/projects') {

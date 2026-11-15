@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import { assert } from './expected-v3.ts';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -8,6 +8,7 @@ import { basename, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { createApp } from '../src/server.ts';
 import { openModelStore, openNamedModelStore } from '../src/model-store.ts';
+import { MODEL_BODY_LIMIT } from '../src/model-schema.ts';
 
 const empty = { schemaVersion: 2, nodes: [], relationships: [] };
 const relationship = (id: string, name: string, source: string, target: string) => ({
@@ -166,12 +167,12 @@ test('invalid model and revision inputs leave exact saved bytes unchanged', asyn
     null, {}, { ...node, extra: true }, { ...node, id: 'node--1' }, { ...node, id: 'node-9007199254740992' },
     { ...node, id: 'node-1.0' }, { ...node, id: 'relationship-1' },
     { ...node, id: 'node-1\n' },
-    ...['person', 'Person Name', 'Éclair', 'Person1', 'Person\n', '', 'A'.repeat(25)].map(name => ({ ...node, name })),
+    ...['Person\n', '', 'A'.repeat(16384), '\ud800'].map(name => ({ ...node, name })),
     ...[0, 40, 61, 100020, null, '60', 1e100].map(x => ({ ...node, x })),
     { ...node, y: 61 },
   ];
   const invalidModels: unknown[] = [
-    null, [], {}, { ...empty, schemaVersion: 3 }, { ...empty, revision: 1 }, { ...empty, extra: true },
+    null, [], {}, { ...empty, schemaVersion: 4 }, { ...empty, revision: 1 }, { ...empty, extra: true },
     { ...empty, nodes: null }, { ...empty, relationships: null },
     ...invalidNodes.map(node => ({ ...empty, nodes: [node] })),
     { ...graph, nodes: [node, node] },
@@ -182,10 +183,10 @@ test('invalid model and revision inputs leave exact saved bytes unchanged', asyn
     { ...graph, relationships: [relationship, { ...relationship, id: 'relationship-99' }] },
     ...[
       { ...relationship, id: 'relationship-9007199254740992' }, { ...relationship, id: 'edge-1' },
-      { ...relationship, name: 'Works_For' }, { ...relationship, name: 'WORKS__FOR' },
-      { ...relationship, name: '_WORKS' }, { ...relationship, name: 'WORKS_' },
+      { ...relationship, name: '\ud800' }, { ...relationship, name: '' },
+      { ...relationship, name: '\0' }, { ...relationship, name: '\t' },
       { ...relationship, name: 'KNOWS\n' }, { ...relationship, id: 'relationship-1\n' },
-      { ...relationship, name: 'A'.repeat(25) }, { ...relationship, source: 'node-3' },
+      { ...relationship, name: 'A'.repeat(16384) }, { ...relationship, source: 'node-3' },
       { ...relationship, target: 'node-3' }, { ...relationship, extra: true }, null,
     ].map(relationship => ({ ...graph, relationships: [relationship] })),
     { ...empty, nodes: Array(201).fill(node) },
@@ -288,7 +289,7 @@ test('corrupt and unsupported disk data never resets or overwrites; errors redac
   await mkdir(join(f.directory, 'models'));
   const corrupt = [
     '{private-secret', 'null', JSON.stringify({ ...empty, revision: -1 }), JSON.stringify({ ...empty, revision: 1.5 }),
-    JSON.stringify({ ...empty, revision: 0, schemaVersion: 3 }), JSON.stringify({ ...empty, revision: 0, secret: 'private-secret' }),
+    JSON.stringify({ ...empty, revision: 0, schemaVersion: 4 }), JSON.stringify({ ...empty, revision: 0, secret: 'private-secret' }),
     JSON.stringify(empty), JSON.stringify({ ...graph, revision: 0, nodes: [{ ...graph.nodes[0], extra: true }] }),
   ];
   for (const content of corrupt) {
@@ -341,7 +342,7 @@ test('read and write failures are meaningful, preserve existing data, clean temp
   assert.deepEqual(await readdir(join(f.directory, 'models')), ['model.json']);
 });
 
-test('model inherits host/origin/media guards and only its body limit increases to 512 KiB', async (t) => {
+test('model inherits host/origin/media guards and only its body limit increases to 16 MiB', async (t) => {
   const f = await fixture(t);
   for (const headers of [{ Origin: 'https://example.com' }, { Origin: 'null' }, { 'Sec-Fetch-Site': 'cross-site' }]) {
     assert.equal((await fetch(f.base + '/api/model', {
@@ -362,11 +363,11 @@ test('model inherits host/origin/media guards and only its body limit increases 
   }
   const payload = JSON.stringify({ expectedRevision: 0, model: graph });
   const exact = await fetch(f.base + '/api/model', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: f.base }, body: payload.padEnd(512 * 1024, ' '),
+    method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: f.base }, body: payload.padEnd(MODEL_BODY_LIMIT, ' '),
   });
   assert.equal(exact.status, 200);
   const bytes = await readFile(f.modelPath);
-  assert.equal((await fetch(f.base + '/api/model', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload.padEnd(512 * 1024 + 1, ' ') })).status, 400);
+  assert.equal((await fetch(f.base + '/api/model', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload.padEnd(MODEL_BODY_LIMIT + 1, ' ') })).status, 400);
   assert.equal((await fetch(f.base + '/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Fine' }).padEnd(32769, ' ') })).status, 400);
   assert.deepEqual(await readFile(f.modelPath), bytes);
 });
@@ -516,7 +517,7 @@ test('definition discovery is physical-only, redacted, fresh, definition-only an
     assert.deepEqual(Object.keys(entry).sort(), ['available', 'error', 'id', 'name']);
     assert.equal(entry.available, false);
   }
-  const definitions = graph.nodes.map(({ id, name, classification, draft, properties }) => ({ id, name, classification, draft, properties }));
+  const definitions = graph.nodes.map(({ id, name, classification, draft, properties }) => ({ kind: 'definition', id, name, classification, draft, properties, impliedLabels: [] }));
   assert.deepEqual(result.models.find((entry: { id: string }) => entry.id === source.id), {
     id: source.id, name: 'Source', available: true, revision: 1, definitions,
   });
@@ -567,7 +568,7 @@ for (const named of [false, true]) {
     };
   }
 
-  test(`${route} all nine cardinality pairs preserve loops, reverse links and reference endpoints across restart`, async t => {
+  test(`${route} all sixteen cardinality pairs preserve loops, reverse links and reference endpoints across restart`, async t => {
     const f = await fixture(t);
     const target = await propertyTarget(f);
     const remoteResponse = await namedRequest(f.base, 'POST', { name: 'Remote', model: graph });
@@ -576,9 +577,9 @@ for (const named of [false, true]) {
     const containingId = named ? basename(target.path, '.json') : 'legacy';
     const internal = reference(containingId);
     const external = { ...reference(remote.id, 'node-2', false), id: 'node-4', name: 'Remote', x: 640 };
-    const ends = ['0..*', '1..*', '1..1'];
+    const ends = ['0..*', '1..*', '1..1', '0..1'];
     const relationships = ends.flatMap((sourceCardinality, i) => ends.map((targetCardinality, j) => ({
-      ...relationship(`relationship-${i * 3 + j}`, `LINK_${String.fromCharCode(65 + i * 3 + j)}`,
+      ...relationship(`relationship-${i * 4 + j}`, `LINK_${String.fromCharCode(65 + i * 4 + j)}`,
         j === 1 ? external.id : internal.id, j === 0 ? internal.id : j === 1 ? internal.id : external.id),
       sourceCardinality, targetCardinality,
     })));
@@ -668,7 +669,7 @@ for (const named of [false, true]) {
     const f = await fixture(t);
     const target = await propertyTarget(f);
     const bytes = await readFile(target.path);
-    const invalid = [null, true, false, 0, 1, [], {}, '', '0..1', '*', 'many', '0..* ', ' 1..1', '1..1\n', '1..2', '0..∞'];
+    const invalid = [null, true, false, 0, 1, [], {}, '', '*', 'many', '0..* ', ' 1..1', '1..1\n', '1..2', '0..∞'];
     for (const schemaVersion of [1, 2]) {
       const patches = [
         ...['sourceCardinality', 'targetCardinality'].flatMap(field => invalid.map(value => ({ [field]: value }))),
@@ -721,7 +722,7 @@ for (const named of [false, true]) {
     // A property name can be reused on a different node; no flag implies another.
     const model = { ...graph, schemaVersion: 1, nodes: graph.nodes.map(node => ({ ...node, properties })) };
     const normalized = { ...model, schemaVersion: 2, nodes: model.nodes.map(node => ({ ...node,
-      properties: node.properties.map(p => ({ ...p, name: p.name.trim(), dataType: p.dataType.trim(), index: p.index ? 'Range' : 'None' })),
+      properties: node.properties.map(p => ({ ...p, index: p.index ? 'Range' : 'None' })),
     })) };
     if (named) {
       const created = await namedRequest(f.base, 'POST', { name: 'Property copy', model });
@@ -844,7 +845,7 @@ for (const named of [false, true]) {
     }
   });
 
-  test(`${route} missing schema-1 properties and metadata normalize without GET/list writes; next PUT persists schema 2`, async (t) => {
+  test(`${route} missing schema-1 properties and metadata normalize without GET/list writes; next PUT persists schema 3`, async (t) => {
     const f = await fixture(t);
     const target = await propertyTarget(f);
     for (let mask = 0; mask < 8; mask++) {
@@ -873,7 +874,7 @@ for (const named of [false, true]) {
       const saved = await target.save(model, 7);
       assert.equal(saved.status, 200);
       assert.deepEqual((await saved.json()).model, { ...expected, revision: 8 });
-      assert.equal(JSON.parse(await readFile(target.path, 'utf8')).schemaVersion, 2);
+      assert.equal(JSON.parse(await readFile(target.path, 'utf8')).schemaVersion, 3);
       assert.deepEqual(JSON.parse(await readFile(target.path, 'utf8')).nodes, expected.nodes);
     }
   });
@@ -884,7 +885,7 @@ for (const named of [false, true]) {
     const bytes = await readFile(target.path);
     const fields = ['name', 'dataType', 'description', 'nodeKey', 'uniqueness', 'mustExist', 'index'] as const;
     const invalid: unknown[] = [null, {}, '', false, 0, [null], [[]], [{}], [{ ...property, extra: true }],
-      [property, property], [property, { ...property, name: '  identifier  ' }],
+      [property, property], [property, { ...property, name: 'identifier' }],
       Array.from({ length: 101 }, (_, i) => ({ ...property, name: `Property ${i}` })),
     ];
     for (const field of fields) {
@@ -892,7 +893,7 @@ for (const named of [false, true]) {
       delete missing[field];
       invalid.push([missing]);
       const values = field === 'name' || field === 'dataType'
-        ? [null, 1, false, [], {}, '', '   ', '😀'.repeat(101), 'a'.repeat(101),
+        ? [null, 1, false, [], {}, '', '   ', '😀'.repeat(8192), 'a'.repeat(16384),
           ...['\0', '\t', '\n', '\r', '\u001f', '\u007f', '\u0085', '\u009f'].map(control => ` ${control}Text `)]
         : field === 'description' ? [null, 0, false, [], {}, 'a\0b', '😀'.repeat(2001), 'a'.repeat(2001)]
           : field === 'index' ? [null, 0, 1, -1, '', 'false', 'true', 'range', 'Unknown', 'Range ', ' None', [], {}]
@@ -1053,7 +1054,7 @@ test('named name, envelope, graph and metadata validation is strict and non-muta
     assert.equal((await namedRequest(f.base, 'PUT', { expectedRevision: 1, name, model: graph }, created.id)).status, 400);
   }
   const invalidModels = [
-    { ...empty, name: 'Nested' }, { ...empty, revision: 1 }, { ...empty, schemaVersion: 3 },
+    { ...empty, name: 'Nested' }, { ...empty, revision: 1 }, { ...empty, schemaVersion: 4 },
     ...[null, 'false', 0].map(draft => ({ ...empty, nodes: [{ ...graph.nodes[0], draft }] })),
     ...[null, 'metadata', 0].map(classification => ({ ...empty, nodes: [{ ...graph.nodes[0], classification }] })),
   ];
@@ -1200,7 +1201,7 @@ test('named updates serialize revision checks across app instances, preserve mod
   assert.deepEqual(await readdir(join(f.directory, 'models')), [created.id + '.json']);
 });
 
-test('named routes retain host/origin/content-type protections and 512 KiB body limits', async (t) => {
+test('named routes retain host/origin/content-type protections and 16 MiB body limits', async (t) => {
   const f = await fixture(t);
   const payload = JSON.stringify({ name: 'Valid', model: graph });
   for (const headers of [{ Origin: 'https://example.com' }, { 'Sec-Fetch-Site': 'cross-site' }]) {
@@ -1209,13 +1210,13 @@ test('named routes retain host/origin/content-type protections and 512 KiB body 
   for (const [content, type] of [['{broken', 'application/json'], [payload, 'text/plain']]) {
     assert.equal((await fetch(f.base + '/api/models', { method: 'POST', headers: { 'Content-Type': type! }, body: content })).status, 400);
   }
-  const response = await fetch(f.base + '/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: f.base }, body: payload.padEnd(512 * 1024, ' ') });
+  const response = await fetch(f.base + '/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: f.base }, body: payload.padEnd(MODEL_BODY_LIMIT, ' ') });
   assert.equal(response.status, 201);
   const entry = await response.json();
   const path = join(f.directory, 'models', entry.id + '.json');
   const bytes = await readFile(path);
   for (const [suffix, method, value] of [['', 'POST', payload], ['/' + entry.id, 'PUT', JSON.stringify({ name: 'Valid', model: empty, expectedRevision: 1 })]]) {
-    assert.equal((await fetch(f.base + '/api/models' + suffix, { method, headers: { 'Content-Type': 'application/json' }, body: value!.padEnd(512 * 1024 + 1, ' ') })).status, 400);
+    assert.equal((await fetch(f.base + '/api/models' + suffix, { method, headers: { 'Content-Type': 'application/json' }, body: value!.padEnd(MODEL_BODY_LIMIT + 1, ' ') })).status, 400);
   }
   assert.deepEqual(await readFile(path), bytes);
 });
@@ -1315,7 +1316,7 @@ for (const legacy of [false, true]) {
     const target = await deletionTarget(f);
     const bytes = await readFile(target.path);
     for (const content of ['{private-secret', 'null', JSON.stringify({ ...empty, revision: -1, ...(legacy ? {} : { name: 'Same' }) }),
-      JSON.stringify({ ...empty, revision: 1, schemaVersion: 3, ...(legacy ? {} : { name: 'Same' }) })]) {
+      JSON.stringify({ ...empty, revision: 1, schemaVersion: 4, ...(legacy ? {} : { name: 'Same' }) })]) {
       await writeFile(target.path, content);
       const result = await namedRequest(f.base, 'DELETE', { expectedRevision: 1 }, target.id);
       assert.equal(result.status, 500);

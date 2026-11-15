@@ -1,0 +1,10 @@
+.indexes-table { margin-top: 0; min-width: 0; }
+.indexes-table td { white-space: pre; }
+.indexes-table ol, .indexes-table ul { margin: 0; padding-left: 22px; }
+.indexes-table ul { list-style: none; padding-left: 0; }
+.indexes-table details { min-width: 150px; }
+.indexes-table summary { min-height: 44px; align-content: center; cursor: pointer; color: var(--muted); }
+.indexes-table dl { margin-bottom: 0; }
+.indexes-table dd { margin: 4px 0 12px; }
+.indexes-table code { display: block; color: var(--muted); }
+.indexes-table pre { margin: 0; font-size: 12px; }

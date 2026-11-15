@@ -478,7 +478,7 @@ return meaningful errors and never silently reset existing data.
 Named saves are siblings of that configured singleton file, in
 **`dirname(BACKLOG_MODEL_PATH)`** (normally `data/models`). The server generates
 lowercase UUIDv4 filenames, `<uuid>.json`. Each contains exactly
-`{schemaVersion: 2, revision, name, nodes, relationships}`; the ID is derived from
+`{schemaVersion:3,revision,name,nodes,relationshipTypes,relationships,constraints,indexes}`; the ID is derived from
 the filename, not duplicated in the file. Duplicate display names are allowed.
 Creating a named copy, including one with the same graph as the legacy model,
 never changes the singleton. Named creation closes a private same-directory
@@ -529,8 +529,8 @@ variables. `BACKLOG_MODEL_PATH` is applied by the standalone server entrypoint.
 To back up: stop the app, then copy the entire `data` directory to a safe location.
 To restore: stop the app and replace `data` with that backup. For a custom path,
 back up the SQLite file and any adjacent `-wal`/`-shm` files together. Do not copy
-only the main SQLite file while the app is running. There is no in-app backup or
-import/export feature yet.
+only the main SQLite file while the app is running. Schema exports are available
+through the model API; they do not back up SQLite or Neo4j graph data.
 
 Optional environment variables for the API:
 
@@ -568,8 +568,8 @@ JSON endpoints under `/api`:
 - `PATCH /projects/:id` with `{name}`, `DELETE /projects/:id` (cascades tasks).
 - `GET /tasks`, `POST /tasks` with `{projectId,title,description?,priority?,dueDate?,status?}`.
 - `PATCH /tasks/:id` with any of those task fields; `DELETE /tasks/:id`.
-- `GET /model` returns `{model: {schemaVersion: 2, revision, nodes, relationships}}`.
-- `PUT /model` accepts `{expectedRevision, model: {schemaVersion: 2, nodes, relationships}}`
+- `GET /model` returns `{model:{schemaVersion:3,revision,nodes,relationshipTypes,relationships,constraints,indexes}}`.
+- `PUT /model` accepts `{expectedRevision,model}` with a schema-1, schema-2 or schema-3 graph
   and returns `{model}` including the new server-managed revision (HTTP 200).
   A stale expected revision returns HTTP 409 `{error}`; reload before saving again.
   Invalid input returns 400, and corrupt/unreadable/unwritable storage returns 500
@@ -587,11 +587,11 @@ JSON endpoints under `/api`:
 - `GET /models/legacy` returns `{id:'legacy',name:'Legacy model',model}`. A missing
   singleton still returns an empty revision-0 model for compatibility, without
   writes; physical symlinks and other nonregular entries are rejected. The
-  standalone `GET /model` also returns canonical schema 2. Save through `PUT /model`;
+  standalone `GET /model` also returns canonical schema 3. Save through `PUT /model`;
   `PUT /models/legacy` is not supported (404).
 - `GET /models/:uuid` returns `{id,name,model}`. The nested model contains only
-  `{schemaVersion:2,revision,nodes,relationships}`, without the display name.
-- `POST /models` accepts `{name,model:{schemaVersion:2,nodes,relationships}}`
+  `{schemaVersion:3,revision,nodes,relationshipTypes,relationships,constraints,indexes}`, without the model display name.
+- `POST /models` accepts `{name,model}` (schema 1, 2 or 3)
   and returns HTTP 201 `{id,name,model}` with a server-generated UUID and revision 1.
 - `PUT /models/:uuid` accepts `{expectedRevision,name,model}` and returns HTTP 200
   `{id,name,model}` with revision incremented by one. Renaming alone still requires
@@ -616,7 +616,7 @@ JSON endpoints under `/api`:
   writer and do not externally replace files while PUT or DELETE is in flight.
 - `GET /model-node-definitions` returns `{models:[...]}`, sorted like `/models`.
   Available entries are `{id,name,available:true,revision,definitions}`; each
-  definition contains exactly `{id,name,classification,draft,properties}`.
+  definition contains schema-3 definition fields except coordinates (`x`, `y`).
   Unavailable entries are `{id,name,available:false,error}` with content-redacted
   errors. Only supported physical files are included, never the virtual empty
   legacy model. Reads use at most eight concurrent file readers, with the same
@@ -628,46 +628,78 @@ Named display names are trimmed, nonblank Unicode text of at most 100 Unicode
 code points, including spaces, with no Unicode control characters (`Cc`). Names
 need not be unique. Graph input excludes `name` and
 `revision`; both named and singleton routes share the same strict graph validation
-and metadata defaults below. Named create/update request bodies retain the 512 KiB
+and metadata defaults below. Model create/update/validation/export bodies have a 16 MiB
 limit; DELETE retains the ordinary 32768-byte limit. All retain the same
 host/origin/media-type protections. No import endpoints are provided.
 
-Canonical graph input and saved files use schema version 2. Schema-1 files and
-requests remain accepted as definitions only: a missing `kind` defaults to
-`definition`; an explicit `kind:'definition'` is accepted, but references are not.
-GET normalizes schema 1 to schema 2 in memory, without migrating or rewriting any
-file. Only an explicit successful save writes schema 2. Schema 2 requires `kind`
-on every node and all fields of its variant.
+### Canonical schema 3 and migration
 
-Definition nodes are `{kind:'definition',id,name,x,y,classification,draft,properties}`
-and relationships are `{id,name,source,target,sourceCardinality,targetCardinality}`.
-Each end's cardinality is exactly `0..*`, `1..*` or `1..1`. In schema-1 and schema-2
-files and requests, either missing cardinality independently defaults to `0..*`.
-GET/list normalize in memory without rewriting files; the next successful save
-persists both fields in schema 2. Explicit invalid values (including null) and
-unknown fields are rejected. Cardinalities are annotations, not enforced constraints;
-local endpoint IDs, reference targets and direction/name uniqueness are unchanged.
-Definition classification is exactly `Transactional`, `Master Data`,
-`Reference Data` or `Metadata`; draft is a boolean. Under schema version 1, either
-node field may independently be omitted by legacy files or clients, defaulting to
-`Transactional` and `false`. GET normalizes responses without rewriting disk;
-the next successful explicit save persists schema 2 and both fields. Supplied invalid values
-(including null) are rejected; revision conflict behavior is unchanged.
-Each node's `properties` is a normalized array (at most 100 entries). Missing
-`properties` independently defaults to `[]` in schema-1 files and requests: GET
-does not rewrite files; the next successful save persists the array. Each property
-requires exactly `{name,dataType,description,nodeKey,uniqueness,mustExist,index}`.
-Names and data types are trimmed, nonblank free text, at most 100 Unicode code
-points with no Unicode control characters (`Cc`); names are case-sensitive unique
-within each node. Data types have no predefined options. Descriptions are strings
-of at most 2000 Unicode code points, allowing multiline text but no NUL. `nodeKey`,
-`uniqueness` and `mustExist` are required strict booleans; `index` is required and
-canonically `None`, `Range`, `Text` or `Point`. Schema-1 files and requests also
-accept legacy boolean indexes (`true` → `Range`, `false` → `None`). GET/list
-normalize without rewriting disk; the next successful save persists canonical
-strings. These fields are independent model annotations and do not create or
-enforce Neo4j constraints or indexes. Null/non-array properties, unknown
-fields and invalid entries are rejected without changing file bytes or revision.
+Canonical graph input is `{schemaVersion:3,nodes,relationshipTypes,relationships,constraints,indexes}`.
+Stored files add the server-managed `revision`, and named files add `name`.
+Schema-1/2 requests and files remain accepted. Reads normalize in memory only;
+only an explicit save writes schema 3. Schema 1 defaults absent `kind` to
+`definition`, classification to `Transactional`, draft to `false` and properties
+to `[]`. Schema 2 requires its previous variant fields.
+
+Node definitions are `{kind:'definition',id,name,displayName?,x,y,classification,draft,properties,impliedLabels}`.
+Classification is `Transactional`, `Master Data`, `Reference Data` or `Metadata`;
+classification is UI metadata and never becomes a Neo4j label automatically.
+`name` is the canonical label; `displayName` is optional UI text. `impliedLabels`
+is an array of label tokens, not property inheritance.
+Properties contain **only** `{name,dataType,description}`, with at most 100 per
+definition. Descriptions allow multiline text, at most 2000 code points and no
+NUL. Declarations remain exact text in storage; unsupported/custom declarations
+produce semantic validation issues rather than making stored files unreadable.
+
+Legacy property annotations migrate deterministically in node/property order:
+each `nodeKey:true` creates a single-property KEY; otherwise `uniqueness:true`
+creates UNIQUE and `mustExist:true` creates EXISTS. A KEY implies uniqueness and
+existence without separate declarations. Legacy Range becomes RANGE unless
+KEY/UNIQUE already owns that tuple's RANGE index; Text and Point remain additional
+explicit indexes. Schema-1 boolean index flags remain accepted. Generated IDs and
+names are `constraint-N`/`migrated_constraint_N` and `index-N`/`migrated_index_N`.
+No inference removes legacy Text indexes. Names, type declarations, descriptions,
+classifications and draft metadata are retained.
+
+Relationship definitions are
+`{kind:'definition',id:'relationship-type-N',name,displayName?,draft,properties,sourceLabel,targetLabel}`.
+Endpoint labels are canonical strings or `null`. References are
+`{kind:'reference',id,name,classification,target:{modelId,relationshipTypeId}}`.
+Edges are `{id,relationshipTypeId,source,target,sourceCardinality,targetCardinality}`,
+with no edge name. Schema-1/2 relationship names group into one owned type per
+exact name, assigned IDs in first-encounter order, with empty properties,
+`draft:false` and null endpoint labels. Each cardinality is `0..*`, `1..*`,
+`1..1` or `0..1`; omitted legacy ends independently default to `0..*`.
+Cardinality is descriptive and has no native Neo4j enforcement.
+
+Constraints are `{id:'constraint-N',name,draft,kind,target:{kind,definitionId},properties}`.
+Target kind is `node` or `relationship` and must identify a locally owned
+definition, never a reference. KEY and UNIQUE use ordered nonempty property
+tuples; EXISTS and TYPE use exactly one property. TYPE takes its type from that
+property's declaration. A declaration alone does not emit a Cypher TYPE constraint.
+
+Indexes are `{id:'index-N',name,draft,kind,targets,properties,filterProperties,config}`;
+every field is required. RANGE has one target and one or more properties;
+TEXT/POINT have one target and one property. FULLTEXT has one or more same-kind
+targets and properties. VECTOR has one or more same-kind targets, exactly one
+embedding property, and optional filter properties. LOOKUP has empty target and
+property arrays, and `config:{entity:'node'|'relationship'}`. KEY/UNIQUE backing
+RANGE indexes are derived and never stored as index records. Multiple explicit
+indexes are supported on each definition. Allowed configuration keys are exact:
+
+- FULLTEXT: `fulltext.analyzer`, `fulltext.eventually_consistent`.
+- VECTOR: `vector.dimensions` (1–4096), `vector.similarity_function`
+  (`cosine`/`euclidean`), `vector.quantization.enabled`, `vector.hnsw.m` (1–512),
+  `vector.hnsw.ef_construction` (1–3200).
+- POINT: `spatial.{cartesian,cartesian-3d,wgs-84,wgs-84-3d}.{min,max}`; finite
+  2D/3D arrays with ordered bounds and valid geographic longitude/latitude.
+- RANGE/TEXT: empty config; LOOKUP: only `entity`.
+
+Canonical labels, relationship types, property keys, constraint/index names and
+implied labels preserve exact Unicode, case, punctuation and spaces. They must
+be nonblank, well-formed Unicode without `Cc` controls, at most 16383 UTF-16 code
+units. Display names and local reference aliases are trimmed, at most 100 Unicode
+code points. Local node placement names remain unique across both node kinds.
 Reference nodes are exactly
 `{kind:'reference',id,name,x,y,classification,target:{modelId,nodeId}}`, without
 `draft` or `properties`. Classification is `Internal Reference` when `modelId`
@@ -689,7 +721,7 @@ Classification/context rules always apply. Reads never require target resolution
 Deleting a target never cascades to or rewrites dependents and does not block
 source reads, unrelated saves or deletion; unresolved references remain stored.
 
-Named POST allocates its UUID internally and rebases **all** Internal Reference
+Named POST allocates its UUID internally and rebases **all node and relationship-type** Internal Reference
 target model IDs to that UUID, allowing graph copies. External targets stay
 unchanged and cannot equal the newly allocated containing UUID. Target identity
 is the tuple `{modelId,nodeId}`: references reflect the latest saved definition at
@@ -698,17 +730,118 @@ Discovery shows saved definitions only. Single-file atomic publication and
 in-process revision queues do not provide atomic cross-file reference integrity:
 an external writer or concurrent target deletion may change a target after validation.
 
-Node IDs match `node-[0-9]+`; relationship IDs match `relationship-[0-9]+`, each
-with a safe-integer suffix and unique exact IDs. Node names contain only ASCII
-letters, start uppercase, are at most 24 characters and are exact-unique.
-Relationship names match `[A-Z]+(?:_[A-Z]+)*`, at most 24 characters. Endpoints
-must exist. Duplicate direction/name connections are rejected; self-links,
-reverse links and differently named parallel links are allowed. Coordinates are
-finite multiples of 20 in `[60,100000]`, with at least 180 Euclidean units between
-nodes. Limits are 200 nodes, 1000 relationships and 512 KiB per model request
-body; other request bodies retain the 32768-byte limit. Unknown fields are
-rejected in requests and stored model files; schema versions 1 and 2 are supported.
-Revisions and expected revisions are nonnegative safe integers.
+Node/edge/type/constraint/index IDs use their respective prefix plus a
+nonnegative safe-integer suffix, with unique exact IDs within each collection.
+Endpoints and relationship type placements must exist. Duplicate directed typed
+connections are rejected; loops, reverse links and differently typed parallel
+links are allowed. Coordinates remain finite multiples of 20 in `[60,100000]`,
+with at least 180 Euclidean units between nodes. Limits are 200 nodes, 1000 edges,
+100 properties per definition, 40000 constraints, 20000 indexes and 1000 entries
+in other schema arrays. The constraint/index caps cover the full legacy maximum
+of 200 nodes × 100 properties × (UNIQUE + EXISTS + one explicit index), without
+truncating annotations. Every legacy normalization is revalidated as canonical
+schema 3, and final save candidates are structurally validated before publication.
+Model request bodies allow 16 MiB so expanded legacy graphs can be resubmitted;
+other bodies retain 32768 bytes. A 453061-byte legacy request in the regression
+fixture expands to a 2113466-byte canonical request, exceeding the previous 2 MiB
+limit; the full 200×100 annotation fixture also fits within 16 MiB. This is a
+request-byte bound, not a read-time disk rewrite or a serialized-file size cap.
+Unknown fields are
+rejected. Revisions and expected revisions are nonnegative safe integers.
+
+### Catalog, composition, validation and exports
+
+All models describe schema reuse within **one Neo4j database**, not cross-database
+data relationships. `GET /api/model-catalog` returns `{models:[...]}` for physical
+stored models only. Available entries include `id,name,available:true,revision,
+sourceSchemaVersion,definitions,relationshipTypes,constraints,indexes`; definition
+nodes omit coordinates, and relationship types include owned definitions only.
+Unavailable entries retain redacted errors. Both catalogs use at most eight
+concurrent readers, retain exact-case/nonregular/symlink safeguards, and never write.
+
+`POST /api/model-validation` accepts `{modelId,model,excludeDrafts?:boolean}`.
+The model is an unsaved candidate without revision or model name; `modelId` is
+`legacy` or an existing/prospective lowercase UUIDv4. `excludeDrafts` defaults true.
+Malformed structure returns 400. Semantic results return 200:
+
+```json
+{"valid":true,"excludeDrafts":true,"issues":[],"dependencies":[]}
+```
+
+Issues are `{severity:'error'|'warning',code,modelId,path,message,related?}` with
+JSON-pointer paths; related entries contain `{modelId,path}`. Dependencies are
+`{modelId,revision}`. Composition uses the unsaved root plus referenced owned
+definitions and their constraint/index dependency closure. Multi-target indexes
+include all required definitions. It deduplicates identity tuples, never canonical
+names; distinct owned tuples sharing a label/type conflict. Reference aliases
+collapse to target names. It includes no unrelated saved models or edges.
+Reference chains and unavailable targets block export; retained unresolved
+references still remain readable/savable. Traversal is bounded to 256 models,
+5000 definitions and 20000 operations. Draft omissions warn; included schema
+objects requiring excluded drafts error instead of being silently truncated.
+Constraint/index names share one database namespace; KEY/UNIQUE on the same
+ordered tuple conflict, and an explicit RANGE duplicating their backing index
+errors. Composite and individual tuples remain distinct.
+
+Property type validation recognizes scalar aliases, UUID, homogeneous scalar
+lists, closed unions and VECTOR coordinate/dimension forms (dimensions 1–4096).
+Nested lists, vector lists, MAP/NODE and unknown types produce issues. Outer
+`NOT NULL` warns to use EXISTS. Incompatible index/property combinations error.
+Generic VECTOR is preserved in storage but cannot be used for a TYPE constraint
+or graph-type property requirement without explicit parameters.
+VECTOR filter properties use an explicit allowlist: INTEGER, FLOAT, STRING,
+BOOLEAN, DATE, LOCAL TIME, ZONED TIME, LOCAL DATETIME, ZONED DATETIME and DURATION.
+Aliases normalize for validation; unions are accepted only when every member is
+allowed. UUID, PROPERTY VALUE/ANY, POINT, lists, vectors and other unsupported
+filter declarations block export with semantic diagnostics (422, no content).
+
+`POST /api/model-export` adds `format:'json'|'cypher'|'graph-type'` to the same
+candidate. Successful responses are `{format,filename,mediaType,content,validation,
+requirements:string[]}`. Blocking issues return 422
+`{error:'Model cannot be exported.',validation}` with no partial script.
+
+- JSON is a `version:1` schema bundle with `rootModelId`, identity-preserving
+  `fragments:[{modelId,model}]` and dependency revisions; it contains no graph data.
+- Cypher emits only declared `CREATE CONSTRAINT` and explicit `CREATE INDEX`
+  statements with `IF NOT EXISTS`. KEY emits one KEY constraint, not redundant
+  UNIQUE/EXISTS/RANGE statements. Identifiers are escaped, including backticks
+  and literal backslash-u sequences; user names never become variables.
+  Implied-label and endpoint-label enforcement requires graph-type export and
+  blocks plain DDL rather than being silently dropped.
+- Graph-type export additionally requires
+  `acknowledgeGraphTypeReplacement:true`, because `ALTER CURRENT GRAPH TYPE SET`
+  **replaces existing graph types and constraints**. It expresses implied labels,
+  explicit relationship endpoint labels and property requirements using current
+  official syntax. Property declarations alone remain annotations in every format:
+  only explicit TYPE constraints emit declared property types. EXISTS and KEY
+  properties without TYPE use `ANY NOT NULL`, preserving existence without adding
+  a type restriction. TYPE alone is optional; only EXISTS/KEY makes it required.
+  An outer `NOT NULL` in a declaration remains a warning, not implicit enforcement.
+  Unconstrained declarations (including generic VECTOR) are omitted from graph-type
+  property maps. Unknown declarations retain blocking semantic diagnostics;
+  explicit unsupported TYPE constraints remain blocking as well.
+  Named KEY/UNIQUE declarations remain named; existence/type element constraints
+  receive Neo4j-generated names with a warning. Identifying/implied label
+  collisions, ambiguous endpoint scope, empty elements with no expressible
+  requirements, and unsupported required union properties block export.
+
+Example validation/export body for an empty schema:
+
+```json
+{"modelId":"legacy","model":{"schemaVersion":3,"nodes":[],"relationshipTypes":[],"relationships":[],"constraints":[],"indexes":[]},"excludeDrafts":true,"format":"cypher"}
+```
+
+Omit `format` for validation. No endpoint connects to Neo4j or executes DDL.
+Exports target current Cypher 25 and report version/edition/privilege requirements.
+KEY/EXISTS/TYPE and graph types require Enterprise; native VECTOR properties
+require Enterprise block format or Aura. Native UUID properties require Neo4j
+2026.08+, Cypher 25 and Enterprise block format (or Aura). Multi-target/filter VECTOR indexes need
+Neo4j 2026.01+; graph types target the generally available 2026.06+ syntax.
+Compatibility profiles are deferred. Syntax references:
+[index syntax](https://neo4j.com/docs/cypher-manual/current/indexes/syntax/),
+[property types](https://neo4j.com/docs/cypher-manual/current/values-and-types/property-structural-constructed/),
+[graph-type SET](https://neo4j.com/docs/cypher-manual/current/schema/graph-types/set-graph-types/).
+Unit/static syntax checks are not proof of execution against a Neo4j engine.
 
 Project/task lists return `{projects}` or `{tasks}`, writes return `{project}` or `{task}`,
 creates return HTTP 201, and deletes return HTTP 204. Errors are `{error: string}`
@@ -736,3 +869,54 @@ unless restored from a backup. Remote/network hosting and HTTPS are not supporte
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
+## PostgreSQL ERD models
+
+SQL ERD models are independent of graph models. The canonical input is
+`{kind:'sql',schemaVersion:1,dialect:'postgresql',tables,foreignKeys}`. Tables are
+`{id,name,x,y,columns}`; columns are
+`{id,name,dataType,nullable,primaryKey,unique}`; foreign keys are
+`{id,name,sourceTableId,sourceColumnId,targetTableId,targetColumnId}`.
+Column IDs are globally unique. Table/foreign-key IDs are unique in their category.
+Table names and column names within each table are exact-case unique. SQL
+identifiers preserve case and punctuation, contain no controls or malformed
+Unicode, and have a 63 UTF-8 byte limit. Coordinates are finite numbers in
+`[0,20000]`; limits are 100 tables, 100 columns per table and 500 foreign keys.
+
+- `GET /api/erd-models` returns `{models:[...]}`. Available summaries are exactly
+  `{id,name,available:true,revision}`; unavailable files use
+  `{id,name,available:false,error}` with the ID as fallback name.
+- `POST /api/erd-models` accepts `{name,model}`, returning HTTP 201
+  `{id,name,model}` with nested server-managed `revision:1`.
+- `GET /api/erd-models/:uuid` returns the same envelope.
+- `PUT /api/erd-models/:uuid` accepts `{name,expectedRevision,model}` and returns
+  HTTP 200 with the incremented revision. `DELETE` accepts `{expectedRevision}`
+  and returns HTTP 204. Stale revisions return 409, missing models 404, malformed
+  requests 400, and invalid/unreadable/unwritable saved files 500, using `{error}`.
+- `POST /api/erd-export` accepts `{model}` and returns
+  `{filename:'schema.sql',mediaType:'application/sql',content}`. Empty models and
+  tables without columns can be saved as drafts, but export returns an actionable
+  400 until every table has columns and at least one table exists.
+
+Types are exactly `smallint`, `integer`, `bigint`, `numeric`, `real`,
+`double precision`, `text`, `varchar`, `boolean`, `uuid`, `date`, `timestamp`,
+`timestamptz`, `jsonb` and `bytea`. This slice supports one nonnullable primary
+key column per table, individual unique columns, and single-column foreign keys
+targeting a primary key or unique column with the exact same type. Duplicate
+foreign-key endpoints are rejected; self-references between distinct columns
+and cycles are supported. Foreign-key names are unique per source table.
+Every emitted SQL identifier is double-quoted with embedded quotes escaped.
+Generated PK/UNIQUE constraint names avoid table and foreign-key names; foreign
+keys are added after all tables exist. No defaults, composite keys, imports,
+database connections or SQL execution are provided.
+
+Explicit saves write `erd-<uuid>.json` beside `BACKLOG_MODEL_PATH`, outside graph
+collection discovery. Creation uses restrictive permissions; atomic replacements
+preserve ordinary file modes. Corrupt, unsupported, symlink and nonregular entries
+cannot be overwritten or deleted through these routes. Per-path in-process
+serialization supports optimistic revisions across app instances in one process;
+deployment requires a single writer, with no external file replacement during
+mutations. Names are trimmed, nonblank text of at most 100 Unicode code points
+without controls. Create/update/export requests allow at most 2 MiB; deletion
+retains the ordinary body limit. Existing localhost, origin and JSON media-type
+protections apply. Export uses the submitted candidate without writing files.

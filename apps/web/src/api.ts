@@ -1,7 +1,7 @@
-import type { ModelInput, StoredModel, NamedModel, ModelSummary, ReferenceCatalogModel, Project, Task, TaskInput } from './types';
+import type { ModelInput, StoredModel, NamedModel, ModelSummary, ReferenceCatalogModel, Project, Task, TaskInput, ValidationResult, ExportFormat, ModelExport } from './types';
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) { super(message); }
+  constructor(message: string, public readonly status: number, public readonly validation?: ValidationResult) { super(message); }
 }
 
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
@@ -17,14 +17,16 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
   }
   if (!response.ok) {
     const data = await response.json().catch(() => null);
-    throw new ApiError(data?.error || `The server could not complete this request (${response.status}). Please try again.`, response.status);
+    throw new ApiError(data?.error || `The server could not complete this request (${response.status}). Please try again.`, response.status, data?.validation);
   }
   if (response.status === 204) return undefined as T;
   return response.json();
 }
 
 export const api = {
-  modelNodeDefinitions: () => request<{ models: ReferenceCatalogModel[] }>('/model-node-definitions'),
+  modelNodeDefinitions: () => request<{ models: ReferenceCatalogModel[] }>('/model-catalog'),
+  validateModel: (modelId: string, model: ModelInput, excludeDrafts: boolean) => request<ValidationResult>('/model-validation', 'POST', { modelId, model, excludeDrafts }),
+  exportModel: (modelId: string, model: ModelInput, excludeDrafts: boolean, format: ExportFormat, acknowledgeGraphTypeReplacement: boolean) => request<ModelExport>('/model-export', 'POST', { modelId, model, excludeDrafts, format, ...(acknowledgeGraphTypeReplacement ? { acknowledgeGraphTypeReplacement: true } : {}) }),
   models: () => request<{ models: ModelSummary[] }>('/models'),
   deleteModel: (id: string, expectedRevision: number) => request<void>(`/models/${encodeURIComponent(id)}`, 'DELETE', { expectedRevision }),
   namedModel: (id: string) => request<NamedModel>(`/models/${encodeURIComponent(id)}`),

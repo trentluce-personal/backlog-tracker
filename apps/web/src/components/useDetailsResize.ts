@@ -80,9 +80,6 @@ export function useDetailsResize(row: RefObject<HTMLDivElement | null>, enabled:
 
   return {
     width, resizing, gesture,
-    canNarrow: enabled && !blocked && !resizing && width > bounds.min,
-    canWiden: enabled && !blocked && !resizing && width < bounds.max,
-    stepWidth: (direction: -1 | 1) => setWidth(width + direction * 80),
     separator: {
       role: 'separator' as const,
       tabIndex: 0,

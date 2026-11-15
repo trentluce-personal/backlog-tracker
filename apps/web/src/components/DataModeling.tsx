@@ -1,17 +1,26 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { Dialog } from './Dialog';
 import { dialogControls } from './dialogFocus';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, ExternalLink, Grid2X2, Link, Pencil, Plus, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { ChevronDown, CircleDashed, ExternalLink, Grid2X2, Info, Link, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { Icon } from './Icon';
-import { NodeNameChip, nodeNameFormat, type NodeNameDraft } from './NodeNameChip';
-import { NodeProperties, hasPropertyDrafts, propertyRows, type PropertyRows } from './NodeProperties';
+import { NodeNameChip, nodeNameFormat } from './NodeNameChip';
+import { NodeProperties, hasPropertyDrafts, propertyRows } from './NodeProperties';
 import { useModelPersistence } from './useModelPersistence';
 import { useDetailsResize } from './useDetailsResize';
 import { useReferenceCatalog, resolveReference } from './useReferenceCatalog';
 import { ReferenceTargetFields } from './ReferenceTargetFields';
 import { ReadOnlyReferenceDetails } from './ReadOnlyReferenceDetails';
 import { edgeGeometry, nearestPlacement, routingBudget, segmentClear } from './modelingGeometry';
-import type { DataClassification, ModelDefinition, ModelNode as NodeLabel, ModelRelationship as Relationship, ModelSummary, ReferenceClassification, RelationCardinality } from '../types';
+import { nodeLabelLines } from './nodeLabelLines';
+import { identifierError, nextSchemaId } from './schemaObjects';
+import { ModelOperations } from './ModelOperations';
+import { IndexDraftContext } from './PropertyIndexes';
+import { pruneIndexDrafts, type IndexDrafts } from './indexEditing';
+import { DefinitionLabels } from './DefinitionLabels';
+import { RelationshipTypeDetails, RelationshipTypeName } from './RelationshipTypeDetails';
+import { useDefinitionDrafts } from './useDefinitionDrafts';
+import { catalogTypeReference, duplicateRelationship, renamePropertySchema, resolveTypeOwner } from './modelEditing';
+import type { DataClassification, ModelDefinition, ModelInput, ModelNode as NodeLabel, ModelRelationship as Relationship, ModelSummary, ReferenceClassification, RelationCardinality } from '../types';
 import './DataModeling.css';
 
 type Selection = { kind: 'node'; id: string } | { kind: 'relationship'; id: string } | { kind: 'bundle'; ids: string[] };
@@ -22,17 +31,14 @@ const RADIUS = 48;
 const MIN_DISTANCE = 180;
 const GRID_STEP = 20;
 const classifications: DataClassification[] = ['Transactional', 'Master Data', 'Reference Data', 'Metadata'];
-const cardinalities: RelationCardinality[] = ['0..*', '1..*', '1..1'];
-const NODE_NAME_PATTERN = /^[A-Z][A-Za-z]*(?![\s\S])/;
-const RELATIONSHIP_NAME_PATTERN = /^[A-Z]+(?:_[A-Z]+)*$/;
-const nodeNameHint = 'Use up to 24 ASCII letters (e.g. CustomerAccount). The first letter is capitalized automatically. No numbers, spaces, or underscores.';
-const relationshipNameHint = 'Use up to 24 ASCII letters, with single underscores between words (e.g. WORKS_AT). Each space becomes an underscore; remove consecutive, leading, or trailing underscores. No numbers.';
+const cardinalities: RelationCardinality[] = ['0..*', '0..1', '1..*', '1..1'];
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const snap = (value: number, limit: number) => clamp(Math.round(value / GRID_STEP) * GRID_STEP, Math.ceil((RADIUS + 5) / GRID_STEP) * GRID_STEP, Math.min(100000, Math.floor((limit - RADIUS - 5) / GRID_STEP) * GRID_STEP));
 
 type Point = { x: number; y: number };
 type CanvasExtent = { width: number; height: number };
-type EdgeGroup = { source: string; target: string; items: Relationship[] };
+type DisplayRelationship = Relationship & { name: string };
+type EdgeGroup = { source: string; target: string; items: DisplayRelationship[] };
 type Segment = { a: Point; b: Point };
 
 function curveClear(points: [Point, Point, Point, Point], obstacles: NodeLabel[]) {
@@ -134,25 +140,19 @@ function labelWidth(text: string) {
   return width;
 }
 
-function labelLines(name: string) {
-  // Measure natural glyph widths; wide names wrap without squeezing the font.
-  const lines: string[] = [];
-  let line = '';
-  for (const character of name) {
-    if (line && labelWidth(line + character) > 76) {
-      lines.push(line); line = '';
-    }
-    line += character;
-  }
-  if (line) lines.push(line);
-  return lines;
+function labelLines(name: string, maxWidth = 76) {
+  return nodeLabelLines(name, labelWidth, maxWidth);
 }
+
+const relationshipChip = (edge: DisplayRelationship) => `${edge.sourceCardinality} · ${edge.name} · ${edge.targetCardinality}`;
 
 export type ModelNavigation = { canNavigate: () => boolean; openFromBrowser: (id: string) => Promise<boolean>; newFromBrowser: () => boolean; deleteFromBrowser: (model: ModelSummary) => Promise<boolean> };
 
-export function DataModeling({ active, browserOpen, browseButton, onBrowse, dialog, setDialog, persistence, navigation, onSaved }: { active: boolean; browserOpen: boolean; browseButton: RefObject<HTMLButtonElement | null>; onBrowse: () => void; dialog: 'node' | 'relationship' | null; setDialog: (dialog: 'node' | 'relationship' | null) => void; persistence: ReturnType<typeof useModelPersistence>; navigation: RefObject<ModelNavigation | null>; onSaved: () => void }) {
-  const { nodes, relationships, setNodes, setRelationships } = persistence;
-  const editable = persistence.phase === 'ready' || persistence.phase === 'empty';
+export function DataModeling({ active, browserOpen, browseButton, onBrowse, dialog, setDialog, persistence, navigation, onSaved, children }: { active: boolean; browserOpen: boolean; browseButton: RefObject<HTMLButtonElement | null>; onBrowse: () => void; dialog: 'node' | 'relationship' | null; setDialog: (dialog: 'node' | 'relationship' | null) => void; persistence: ReturnType<typeof useModelPersistence>; navigation: RefObject<ModelNavigation | null>; onSaved: () => void; children: ReactNode }) {
+  const { nodes, relationshipTypes, setNodes, setRelationships } = persistence;
+  const [chosenType, setChosenType] = useState('');
+  const [indexDrafts, setIndexDrafts] = useState<IndexDrafts>({});
+  const editable = (persistence.phase === 'ready' || persistence.phase === 'empty') && !persistence.deleting && !persistence.creating;
   const [dragging, setDragging] = useState(false);
   const [panning, setPanning] = useState(false);
   const pan = useRef<{ pointerId: number; element: HTMLDivElement; start: Point; scroll: Point; moved: boolean } | null>(null);
@@ -160,7 +160,6 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   // starts a valid sequence, while a pan's release cannot become half a dblclick.
   const panClick = useRef<{ release: boolean } | null>(null);
   const [naming, setNaming] = useState<'title' | 'create' | null>(null);
-  const browserCreation = useRef(false);
   const creationConfirmed = useRef(false);
   const pendingAddition = useRef<{ kind: 'node' | 'relationship'; point?: Point } | null>(null);
   const [resumeAddition, setResumeAddition] = useState(false);
@@ -185,15 +184,24 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   const referenceModelInput = useRef<HTMLSelectElement>(null);
   const referenceNodeInput = useRef<HTMLSelectElement>(null);
   const referenceMode = nodeClassification === 'Internal Reference' || nodeClassification === 'External Reference';
-  const catalog = useReferenceCatalog(nodes.some(node => node.kind === 'reference' && node.classification === 'External Reference'), persistence.hydration, dialog === 'node' && referenceMode);
+  const catalog = useReferenceCatalog(nodes.some(node => node.kind === 'reference' && node.classification === 'External Reference') || relationshipTypes.some(type => type.kind === 'reference'), persistence.hydration, dialog === 'relationship' || (dialog === 'node' && referenceMode));
+  const relationships = useMemo(() => persistence.relationships.map(edge => {
+    const type = relationshipTypes.find(type => type.id === edge.relationshipTypeId);
+    const source = type?.kind === 'reference' ? catalog.models.find(model => model.id === type.target.modelId) : undefined;
+    const definition = type?.kind === 'definition' ? type : type?.kind === 'reference' ? type.target.modelId === persistence.id
+      ? relationshipTypes.find(other => other.kind === 'definition' && other.id === type.target.relationshipTypeId)
+      : source?.available ? source.relationshipTypes.find(other => other.id === type.target.relationshipTypeId) : undefined : undefined;
+    return { ...edge, name: definition?.kind === 'definition' ? definition.displayName || definition.name : type?.name ?? 'Unresolved type' };
+  }), [persistence.relationships, relationshipTypes, catalog.models, persistence.id]);
   const resolutionFor = (node: Extract<NodeLabel, { kind: 'reference' }>) => resolveReference(node, persistence.id, persistence.name, nodes, catalog.models, catalog.stale, catalog.loaded, catalog.loading, catalog.error);
   const displayDraft = (node: NodeLabel) => node.kind === 'definition' ? node.draft : resolutionFor(node).definition?.draft;
   const [relationshipName, setRelationshipName] = useState('');
   const [source, setSource] = useState('');
   const [target, setTarget] = useState('');
   const [nodeError, setNodeError] = useState('');
-  const [nameDrafts, setNameDrafts] = useState<Record<string, NodeNameDraft>>({});
-  const [propertiesDrafts, setPropertiesDrafts] = useState<PropertyRows>({});
+  const { names: nameDrafts, setNames: setNameDrafts, properties: propertiesDrafts, setProperties: setPropertiesDrafts } = useDefinitionDrafts(persistence.graph);
+  const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
+  const [edgeEditError, setEdgeEditError] = useState<{ id: string; message: string } | null>(null);
   const renameInput = useRef<HTMLInputElement>(null);
   const [relationshipError, setRelationshipError] = useState<{ field: 'name' | 'source' | 'target'; message: string } | null>(null);
   const [announcement, setAnnouncement] = useState('');
@@ -213,6 +221,10 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   const { width: canvasWidth, height: canvasHeight } = canvas;
   const scrollRef = useRef<HTMLDivElement>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
+  const legendTools = useRef<HTMLDivElement>(null);
+  const legendButton = useRef<HTMLButtonElement>(null);
+  const [legendOpen, setLegendOpen] = useState(false);
+  const [controlsHeight, setControlsHeight] = useState(54);
   const [zoom, setZoom] = useState(1);
   const [showGrid, setShowGrid] = useState(true);
   const view = useRef<{ scale: number; originX: number; originY: number; width: number; height: number; hydration: number } | null>(null);
@@ -229,10 +241,86 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   const [preview, setPreview] = useState<{ source: string; point: Point; target: string | null } | null>(null);
-  const hasRenameDrafts = nodes.some(node => nameDrafts[node.id] && nameDrafts[node.id].value !== node.name);
-  const hasDrafts = Boolean(nodeName || nodeClassification !== 'Transactional' || referenceModel || referenceNode || relationshipName || source || target || hasRenameDrafts || Object.values(propertiesDrafts).some(hasPropertyDrafts));
+  const hasRenameDrafts = [...nodes, ...relationshipTypes].some(node => nameDrafts[node.id] && nameDrafts[node.id].value !== node.name);
+  const hasDrafts = Boolean(Object.keys(indexDrafts).length || nodeName || nodeClassification !== 'Transactional' || referenceModel || referenceNode || relationshipName || chosenType || source || target || hasRenameDrafts || Object.values(propertiesDrafts).some(hasPropertyDrafts) || Object.values(labelDrafts).some(Boolean));
   const contentRow = useRef<HTMLDivElement>(null);
-  const detailsResize = useDetailsResize(contentRow, active && Boolean(selection), Boolean(dialog || naming || browserOpen || dragging || panning || persistence.saving));
+  const modelsPanel = useRef<HTMLDialogElement>(null);
+  const modelsExpand = browseButton;
+  const modelsHeading = useRef<HTMLHeadingElement>(null);
+  const restoreModelsFocus = useRef(false);
+  const [rowWidth, setRowWidth] = useState(0);
+  const [toolbarWidth, setToolbarWidth] = useState(360);
+  const modelsModal = active && browserOpen && narrowDetails;
+  const panelsFit = rowWidth >= 320 + 320 + toolbarWidth + 36;
+  const detailsVisible = Boolean(selection) && !(browserOpen && (!panelsFit || narrowDetails));
+  const detailsResize = useDetailsResize(contentRow, active && detailsVisible, Boolean(dialog || naming || modelsModal || dragging || panning || persistence.saving));
+  const detailsWidth = browserOpen && !narrowDetails ? Math.min(detailsResize.width, Math.max(0, rowWidth - 320 - toolbarWidth - 36)) : detailsResize.width;
+
+  useLayoutEffect(() => {
+    const row = contentRow.current;
+    if (!row) return;
+    const measure = () => {
+      setRowWidth(row.clientWidth);
+      setToolbarWidth(controlsRef.current?.scrollWidth ?? 360);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    if (controlsRef.current) observer.observe(controlsRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  function collapseModels() {
+    if (dialog || naming || persistence.busy.current || drag.current || pan.current || detailsResize.gesture.current) return;
+    modelsPanel.current?.close();
+    restoreModelsFocus.current = true;
+    onBrowse();
+  }
+
+  useLayoutEffect(() => {
+    const panel = modelsPanel.current;
+    if (!panel) return;
+    if (!active || !browserOpen) {
+      panel.close();
+      if (active && restoreModelsFocus.current) modelsExpand.current?.focus({ preventScroll: true });
+      restoreModelsFocus.current = false;
+      return;
+    }
+    if (dialog || naming) return;
+    if (panel.open && panel.matches(':modal') === narrowDetails) return;
+    const previous = document.activeElement as HTMLElement | SVGElement | null;
+    panel.close();
+    if (narrowDetails) {
+      detailsRef.current?.close();
+      panel.showModal();
+      modelsHeading.current?.focus({ preventScroll: true });
+    } else {
+      panel.show();
+      if (previous === modelsExpand.current) panel.querySelector<HTMLButtonElement>('.modeling-details-close')?.focus({ preventScroll: true });
+      else previous?.focus({ preventScroll: true });
+    }
+  }, [active, browserOpen, narrowDetails, dialog, naming]);
+
+  useLayoutEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const measure = () => setControlsHeight(controls.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(controls);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!legendOpen) return;
+    const outside = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Node && !legendTools.current?.contains(event.target)) setLegendOpen(false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [legendOpen]);
+
+  useEffect(() => { if (!active) setLegendOpen(false); }, [active]);
 
   useLayoutEffect(() => {
     if (!persistence.hydration) return;
@@ -240,20 +328,22 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   }, [persistence.hydration]);
 
   function canNavigate(fromBrowser = false) {
-    return (!browserOpen || fromBrowser) && !detailsResize.gesture.current && !drag.current && !pan.current && !persistence.busy.current && !dialog && !naming && !detailsRef.current?.matches(':modal');
+    return (!modelsModal || fromBrowser) && !detailsResize.gesture.current && !drag.current && !pan.current && !persistence.busy.current && !dialog && !naming && !detailsRef.current?.matches(':modal');
   }
 
   function confirmSwitch() {
-    return !(persistence.dirty || hasDrafts) || window.confirm('Open another model? This discards your unsaved graph changes and all unfinished property rows, node names, label name edits, and relationship names and endpoints, including closed drafts.');
+    return !(persistence.dirty || hasDrafts) || window.confirm('Open another model? This discards your unsaved graph changes and all unfinished property rows, index forms, node names, label name edits, and relationship names and endpoints, including closed drafts.');
   }
 
   function clearDrafts() {
     cancelPan(); cancelDrag(); detailsRef.current?.close(); setSelection(null);
     selectionOrigin.current = null; nodePlacement.current = null; setPendingConnection(null);
-    setNodeName(''); setRelationshipName(''); setSource(''); setTarget('');
+    setNodeName(''); setRelationshipName(''); setChosenType(''); setSource(''); setTarget('');
     setNodeClassification('Transactional'); setReferenceModel(''); setReferenceNode(''); setNodeErrorField('name');
     setNameDrafts({});
     setPropertiesDrafts({});
+    setIndexDrafts({});
+    setLabelDrafts({}); setEdgeEditError(null);
     setNodeError(''); setRelationshipError(null); setDialog(null);
   }
 
@@ -277,19 +367,13 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
       return true;
     }, newFromBrowser: () => {
       if (!browserOpen || !canNavigate(true)) return false;
-      browserCreation.current = true;
+      namingOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : browseButton.current;
+      creationConfirmed.current = false;
+      setModelName(''); setModelNameError(''); persistence.clearCreationError(); setNaming('create');
       return true;
     } };
     return () => { navigation.current = null; };
   });
-
-  useEffect(() => {
-    if (browserOpen || !browserCreation.current) return;
-    browserCreation.current = false;
-    namingOrigin.current = browseButton.current;
-    creationConfirmed.current = false;
-    setModelName(''); setModelNameError(''); persistence.clearCreationError(); setNaming('create');
-  }, [browserOpen]);
 
   useEffect(() => {
     if (!resumeAddition || naming || persistence.id === null) return;
@@ -351,7 +435,8 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   }
 
   function inspect(next: Selection, origin?: SVGElement | HTMLElement) {
-    if (!active || dialog || naming || browserOpen || persistence.phase === 'loading' || detailsResize.gesture.current || drag.current || pan.current) return;
+    if (!active || dialog || naming || modelsModal || persistence.busy.current || detailsResize.gesture.current || drag.current || pan.current) return;
+    if (browserOpen && !panelsFit) onBrowse();
     renameInput.current?.blur();
     const internal = Boolean(origin && detailsRef.current?.contains(origin));
     if (origin && !internal) selectionOrigin.current = origin;
@@ -380,7 +465,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   }
 
   function clearSelection() {
-    if (!active || dialog || detailsResize.gesture.current || drag.current || !selection) return;
+    if (!active || dialog || naming || persistence.busy.current || detailsResize.gesture.current || drag.current || !selection) return;
     renameInput.current?.blur();
     restoringCanvasFocus.current = true;
     detailsRef.current?.close();
@@ -409,10 +494,10 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   useLayoutEffect(() => {
     const details = detailsRef.current;
     if (!details) return;
-    if (!active) { details.close(); return; }
+    if (!active || !detailsVisible) { details.close(); return; }
     // A creation dialog owns the top layer and Escape until it closes. Defer
     // breakpoint changes so the inspector never jumps above that native modal.
-    if (dialog || naming || browserOpen) return;
+    if (dialog || naming || modelsModal) return;
     const modal = details.matches(':modal');
     if (!details.open || modal !== narrowDetails) {
       const previous = document.activeElement as HTMLElement | SVGElement | null;
@@ -433,14 +518,18 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
       focusDetails.current = false;
       detailsHeading.current?.focus({ preventScroll: true });
     }
-  }, [active, dialog, naming, browserOpen, narrowDetails, selection]);
+  }, [active, dialog, naming, modelsModal, narrowDetails, selection, detailsVisible]);
 
   useEffect(() => {
     if (!active || !selection) return;
     const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape' || dialog || naming || browserOpen || drag.current || pan.current || event.defaultPrevented) return;
+      if (event.key !== 'Escape' || dialog || naming || modelsModal || drag.current || pan.current || event.defaultPrevented) return;
+      if (event.target instanceof Element && event.target.closest('dialog') && event.target.closest('dialog') !== detailsRef.current) return;
       if (event.target === renameInput.current) return;
+      if (event.target instanceof Element && event.target.closest('.modeling-name-editor')) return;
+      if (event.target instanceof Element && event.target.id === 'implied-label' && (event.target as HTMLInputElement).value) return;
       if (event.target instanceof Element && event.target.closest('[data-property-editor]')) return;
+      if (event.target instanceof Element && event.target.closest('.index-editor')) return;
       event.preventDefault();
       closeDetails();
     };
@@ -504,10 +593,10 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   }
 
   useLayoutEffect(() => {
-    if (!active || dialog || naming || browserOpen) { cancelPan(); cancelDrag(); }
+    if (!active || dialog || naming || modelsModal) { cancelPan(); cancelDrag(); }
     if (!active || dialog !== 'node') nodePlacement.current = null;
     if (!active || dialog !== 'node') setPendingConnection(null);
-  }, [active, dialog, naming, browserOpen]);
+  }, [active, dialog, naming, modelsModal]);
 
   function revealNode(element: SVGElement) {
     const scroll = scrollRef.current;
@@ -518,16 +607,17 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     const inspector = detailsRef.current;
     const right = inspector?.open && !inspector.matches(':modal')
       ? Math.min(bounds.right, inspector.getBoundingClientRect().left) : bounds.right;
-    const visibleWidth = Math.max(0, right - bounds.left);
+    const left = browserOpen && !narrowDetails ? Math.max(bounds.left, modelsPanel.current?.getBoundingClientRect().right ?? bounds.left) : bounds.left;
+    const visibleWidth = Math.max(0, right - left);
     const delta = (start: number, end: number, viewportStart: number, size: number) =>
       end - start + 6 > size ? (start + end) / 2 - viewportStart - size / 2
         : start - 3 < viewportStart ? start - 3 - viewportStart
         : end + 3 > viewportStart + size ? end + 3 - viewportStart - size : 0;
-    const dx = delta(ring.left, ring.right, bounds.left, visibleWidth);
+    const dx = delta(ring.left, ring.right, left, visibleWidth);
     const dy = delta(ring.top, ring.bottom, bounds.top, scroll.clientHeight);
     scroll.scrollLeft += dx;
     scroll.scrollTop += dy;
-    for (const overlay of [controlsRef.current, regionRef.current?.querySelector('.modeling-bundles')]) {
+    for (const overlay of [legendTools.current, regionRef.current?.querySelector('.modeling-bundles'), !browserOpen ? modelsExpand.current : null]) {
       const visible = focusShape.getBoundingClientRect();
       const toolbar = overlay?.getBoundingClientRect();
       if (!toolbar || visible.right + 3 <= toolbar.left || visible.left - 3 >= toolbar.right
@@ -550,9 +640,9 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
 
   useLayoutEffect(() => {
     const focused = document.activeElement;
-    if (active && !dialog && !naming && !browserOpen && !narrowDetails && !restoringCanvasFocus.current && !drag.current && !pan.current && !detailsResize.gesture.current
+    if (active && !dialog && !naming && !modelsModal && !narrowDetails && !restoringCanvasFocus.current && !drag.current && !pan.current && !detailsResize.gesture.current
       && focused instanceof SVGElement && svgRef.current?.contains(focused) && focused.matches('[role="button"]:focus-visible')) revealNode(focused);
-  }, [active, dialog, naming, browserOpen, narrowDetails, selection, detailsResize.width]);
+  }, [active, dialog, naming, browserOpen, narrowDetails, selection, detailsWidth, rowWidth]);
 
   useLayoutEffect(() => {
     const request = keyboardMove.current;
@@ -658,9 +748,9 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     event.preventDefault();
     if (!active || !editable || persistence.id === null || dialog !== 'node') return;
     if (nodes.length >= 200 || !Number.isSafeInteger(nextId.current)) { setNodeError('The model has reached its node or ID limit.'); return; }
-    const name = nodeName;
+    const name = referenceMode ? nodeName.trim() : nodeName;
     setNodeErrorField('name');
-    if (!NODE_NAME_PATTERN.test(name) || name.length > 24) { setNodeError(name ? nodeNameHint : 'Enter a node label name.'); nodeInput.current?.focus(); return; }
+    if (identifierError(name) || (referenceMode && [...name].length > 100)) { setNodeError(referenceMode ? 'Enter an alias of 1–100 characters without control characters.' : identifierError(name)); nodeInput.current?.focus(); return; }
     if (nodes.some(node => node.name === name)) { setNodeError('A node label with this name already exists.'); nodeInput.current?.focus(); return; }
     if (referenceMode) {
       if (nodeClassification === 'External Reference' && (!referenceModel || referenceModel === persistence.id || !catalog.models.some(model => model.id === referenceModel && model.available))) {
@@ -681,7 +771,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     const id = `node-${nextId.current++}`;
     const node: NodeLabel = referenceMode
       ? { kind: 'reference', id, name, ...position, classification: nodeClassification as ReferenceClassification, target: { modelId: nodeClassification === 'Internal Reference' ? persistence.id : referenceModel, nodeId: referenceNode } }
-      : { kind: 'definition', id, name, ...position, classification: nodeClassification as DataClassification, draft: false, properties: [] };
+      : { kind: 'definition', id, name, ...position, classification: nodeClassification as DataClassification, draft: false, properties: [], impliedLabels: [] };
     setNodes(current => [...current, node]);
     setNodeClassification('Transactional'); setReferenceModel(''); setReferenceNode('');
     setNodeName(''); setNodeError(''); setAnnouncement(`Node label ${name} added.`);
@@ -699,20 +789,29 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     if (!active || !editable || persistence.id === null || dialog !== 'relationship') return;
     if (relationships.length >= 1000 || !Number.isSafeInteger(nextId.current)) { setRelationshipError({ field: 'name', message: 'The model has reached its relationship or ID limit.' }); return; }
     const name = relationshipName;
-    if (!RELATIONSHIP_NAME_PATTERN.test(name) || name.length > 24) { setRelationshipError({ field: 'name', message: name ? relationshipNameHint : 'Enter a relationship name.' }); relationshipInput.current?.focus(); return; }
+    if (!chosenType && (identifierError(name) || relationshipTypes.some(type => type.kind === 'definition' && type.name === name))) { setRelationshipError({ field: 'name', message: identifierError(name) || 'This type already exists. Select it from Type.' }); relationshipInput.current?.focus(); return; }
     if (!nodes.some(node => node.id === source)) { setRelationshipError({ field: 'source', message: 'Select a source node label.' }); sourceInput.current?.focus(); return; }
     if (!nodes.some(node => node.id === target)) { setRelationshipError({ field: 'target', message: 'Select a target node label.' }); targetInput.current?.focus(); return; }
-    if (relationships.some(item => item.source === source && item.target === target && item.name === name)) {
-      setRelationshipError({ field: 'name', message: 'This directed relationship already exists.' }); relationshipInput.current?.focus(); return;
+    const externalChoice = chosenType.startsWith('catalog:') ? chosenType.slice(8).split('/') : null;
+    const externalModel = externalChoice ? catalog.models.find(model => model.id === externalChoice[0]) : undefined;
+    const externalType = externalModel?.available ? externalModel.relationshipTypes.find(type => type.id === externalChoice?.[1]) : undefined;
+    if (chosenType && !relationshipTypes.some(type => type.id === chosenType) && !externalType) { setRelationshipError({ field: 'name', message: 'Select an available type.' }); return; }
+    const reference = externalType && externalChoice ? catalogTypeReference(relationshipTypes, persistence.id, externalChoice[0], externalType) : undefined;
+    const typeId = reference?.id || (!chosenType ? nextSchemaId('relationship-type', relationshipTypes) : chosenType);
+    if (duplicateRelationship(persistence.relationships, { id: '', source, target, relationshipTypeId: typeId, sourceCardinality: '0..*', targetCardinality: '0..*' })) {
+      setRelationshipError({ field: 'name', message: 'Type: this directed relationship already exists.' }); return;
     }
     const id = `relationship-${nextId.current++}`;
-    setRelationships(current => [...current, { id, name, source, target, sourceCardinality: '0..*', targetCardinality: '0..*' }]);
+    persistence.setGraph(current => ({ ...current, relationshipTypes: reference && !current.relationshipTypes.some(type => type.id === reference.id)
+      ? [...current.relationshipTypes, reference]
+      : chosenType ? current.relationshipTypes : [...current.relationshipTypes, { kind: 'definition', id: typeId, name, draft: false, properties: [], sourceLabel: null, targetLabel: null }], relationships: [...current.relationships, { id, relationshipTypeId: typeId, source, target, sourceCardinality: '0..*', targetCardinality: '0..*' }] }));
+    setChosenType('');
     setRelationshipName(''); setSource(''); setTarget(''); setRelationshipError(null); setAnnouncement(`Relationship ${name} added.`); setDialog(null);
   }
 
   function normalizedNodeName(input: HTMLInputElement) {
     const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
-    const next = input.value.replace(/^[a-z]/, character => character.toUpperCase());
+    const next = input.value;
     if (input.value !== next) {
       input.value = next;
       if (start !== null && end !== null) input.setSelectionRange(start, end, direction ?? undefined);
@@ -729,9 +828,9 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     if (!active || !editable) return 'Label names cannot be edited right now.';
     const node = nodesRef.current.find(node => node.id === id);
     if (!node) return 'This node label is no longer available.';
-    const name = value.replace(/^[a-z]/, character => character.toUpperCase());
-    const error = !NODE_NAME_PATTERN.test(name) || name.length > 24
-      ? name ? 'Use 1–24 ASCII letters, without spaces, numbers, or underscores.' : 'Enter a node label name.'
+    const name = value;
+    const error = identifierError(name) || (node.kind === 'reference' && [...name].length > 100 ? 'Use at most 100 characters.' : '')
+      ? identifierError(name) || 'Use at most 100 characters.'
       : nodesRef.current.some(other => other.id !== id && other.name === name) ? 'A node label with this name already exists.' : '';
     if (error) return error;
     if (name !== node.name) setNodes(current => current.some(other => other.id !== id && other.name === name) ? current : current.map(other => other.id === id ? { ...other, name } : other));
@@ -741,7 +840,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
 
   function changeRelationshipName(input: HTMLInputElement) {
     const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
-    const next = input.value.replace(/[a-z ]/g, character => character === ' ' ? '_' : character.toUpperCase());
+    const next = input.value;
     if (input.value !== next) {
       input.value = next;
       if (start !== null && end !== null) input.setSelectionRange(start, end, direction ?? undefined);
@@ -750,7 +849,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     if (relationshipError?.field === 'name') setRelationshipError(null);
   }
 
-  function updateNodeMetadata(changes: Partial<Pick<ModelDefinition, 'classification' | 'draft'>>) {
+  function updateNodeMetadata(changes: Partial<ModelDefinition>) {
     if (!active || !editable || selectedNode?.kind !== 'definition') return;
     setNodes(current => current.map(node => node.id === selectedNode.id && node.kind === 'definition' ? { ...node, ...changes } : node));
   }
@@ -758,6 +857,12 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   function updateRelationshipCardinality(id: string, end: 'sourceCardinality' | 'targetCardinality', value: RelationCardinality) {
     if (!active || !editable || persistence.phase !== 'ready') return;
     setRelationships(current => current.map(relationship => relationship.id === id ? { ...relationship, [end]: value } : relationship));
+  }
+  function editRelationship(edge: Relationship, changes: Partial<Relationship>, field: string) {
+    const candidate = { ...edge, ...changes };
+    if (duplicateRelationship(persistence.relationships, candidate)) { setEdgeEditError({ id: edge.id, message: `${field}: this directed relationship already exists.` }); return; }
+    setEdgeEditError(null);
+    setRelationships(current => current.map(item => item.id === edge.id ? { ...item, ...changes } : item));
   }
 
   function nodePosition(current: NodeLabel[], id: string, x: number, y: number) {
@@ -772,18 +877,6 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
       if (!position || current.some(node => node.id === id && node.x === position.x && node.y === position.y)) return current;
       return current.map(node => node.id === id ? { ...node, ...position } : node);
     });
-  }
-
-  function moveSelectedNode(dx: number, dy: number, largeStep: boolean) {
-    if (!active || !editable || !selectedNode || dialog || naming || browserOpen || persistence.busy.current || drag.current || pan.current || detailsResize.gesture.current) return;
-    const node = nodesRef.current.find(node => node.id === selectedNode.id);
-    if (!node) return;
-    const step = GRID_STEP * (largeStep ? 4 : 1);
-    const position = nodePosition(nodesRef.current, node.id, node.x + dx * step, node.y + dy * step);
-    if (!position) { setAnnouncement('Move blocked: another node is too close.'); return; }
-    if (position.x === node.x && position.y === node.y) { setAnnouncement('Move blocked: canvas boundary.'); return; }
-    moveNode(node.id, position.x, position.y);
-    setAnnouncement(`${node.name} position: ${position.x}, ${position.y}.`);
   }
 
   function point(client: Point) {
@@ -926,7 +1019,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   }
 
   function moveByKeyboard(event: KeyboardEvent<SVGGElement>, node: NodeLabel) {
-    if (!editable || detailsResize.gesture.current || drag.current || pan.current || (narrowDetails && selection)) return;
+    if (!active || !editable || persistence.busy.current || dialog || naming || modelsModal || detailsResize.gesture.current || drag.current || pan.current || (narrowDetails && selection)) return;
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       inspect({ kind: 'node', id: node.id }, event.currentTarget);
@@ -968,39 +1061,44 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     const variants = group.separate.length ? group.separate.map((geometry, index) => ({ geometry: geometry!, item: group.items[index], suffix: String.fromCharCode(97 + index) })) : [{ geometry: group.geometry, item: null, suffix: '' }];
     return variants.filter(variant => variant.geometry).map(({ geometry, item, suffix }) => ({ group, geometry: geometry!, item, suffix }));
   });
-  const badges: { x: number; y: number; width: number }[] = [];
+  const badges: { x: number; y: number; width: number; height: number }[] = [];
   const placed = drawn.map(edge => {
-    const text = edge.item?.name ?? (edge.group.items.length === 1 ? edge.group.items[0].name : `Bundle ${edge.group.number} · ${edge.group.items.length} types`);
-    const width = Math.max(48, Math.ceil(labelWidth(text)) + 20);
+    const item = edge.item ?? (edge.group.items.length === 1 ? edge.group.items[0] : null);
+    const text = item ? relationshipChip(item) : `Bundle ${edge.group.number} · ${edge.group.items.length} types`;
+    const lines = labelLines(text, canvasWidth - 24);
+    const width = Math.max(48, Math.ceil(Math.max(...lines.map(labelWidth))) + 20);
+    const height = 24 + (lines.length - 1) * 16;
     const origin = edge.geometry.badge;
     const candidates = Array.from({ length: 41 }, (_, index) => {
       const shift = index === 0 ? 0 : Math.ceil(index / 2) * 25 * (index % 2 ? -1 : 1);
-      return { x: clamp(origin.x, width / 2 + 2, canvasWidth - width / 2 - 2), y: clamp(origin.y + shift, 13, canvasHeight - 13), width };
+      return { x: clamp(origin.x, width / 2 + 2, canvasWidth - width / 2 - 2), y: clamp(origin.y + shift, height / 2 + 1, canvasHeight - height / 2 - 1), width, height };
     });
-    const badge = candidates.find(candidate => badges.every(other => Math.abs(candidate.x - other.x) >= (candidate.width + other.width) / 2 + 6 || Math.abs(candidate.y - other.y) >= 28) && nodes.every(node => Math.hypot(Math.max(0, Math.abs(candidate.x - node.x) - candidate.width / 2), Math.max(0, Math.abs(candidate.y - node.y) - 12)) >= RADIUS + 8)) ?? candidates[0];
+    const badge = candidates.find(candidate => badges.every(other => Math.abs(candidate.x - other.x) >= (candidate.width + other.width) / 2 + 6 || Math.abs(candidate.y - other.y) >= (candidate.height + other.height) / 2 + 4) && nodes.every(node => Math.hypot(Math.max(0, Math.abs(candidate.x - node.x) - candidate.width / 2), Math.max(0, Math.abs(candidate.y - node.y) - candidate.height / 2)) >= RADIUS + 8)) ?? candidates[0];
     badges.push(badge);
-    return { ...edge, text, badge, origin };
+    return { ...edge, lines, badge, origin };
   });
 
   const selectedNode = selection?.kind === 'node' ? nodes.find(node => node.id === selection.id) : null;
   const selectedRelationship = selection?.kind === 'relationship' ? relationships.find(item => item.id === selection.id) : null;
+  const selectedType = selectedRelationship ? relationshipTypes.find(type => type.id === selectedRelationship.relationshipTypeId) : undefined;
+  const selectedTypeName = selectedType ? resolveTypeOwner(selectedType, persistence.graph, persistence.id, catalog.models).definition?.name ?? selectedType.name : undefined;
   const nodeNameFor = (id: string) => nodes.find(node => node.id === id)?.name ?? 'Unknown node';
-  const edgeSelected = (items: Relationship[]) => selection?.kind === 'relationship' ? items.some(item => item.id === selection.id)
+  const edgeSelected = (items: DisplayRelationship[]) => selection?.kind === 'relationship' ? items.some(item => item.id === selection.id)
     : selection?.kind === 'bundle' ? items.some(item => selection.ids.includes(item.id)) : false;
-  const edgeSelection = (items: Relationship[]): Selection => items.length === 1 ? { kind: 'relationship', id: items[0].id } : { kind: 'bundle', ids: items.map(item => item.id) };
-  const edgeDescription = (items: Relationship[]) => items.map(item => `${nodeNameFor(item.source)} → ${item.name} → ${nodeNameFor(item.target)}`).join('; ');
-  function relationshipList(items: Relationship[]) {
-    return <ul className="modeling-detail-list">{items.map(item => <li key={item.id}><button type="button" aria-pressed={selection?.kind === 'relationship' && selection.id === item.id} onClick={event => inspect({ kind: 'relationship', id: item.id }, event.currentTarget)}><strong>{item.name}</strong><span>{nodeNameFor(item.source)} → {nodeNameFor(item.target)}{item.source === item.target ? ' (self-loop)' : ''}</span></button></li>)}</ul>;
+  const edgeSelection = (items: DisplayRelationship[]): Selection => items.length === 1 ? { kind: 'relationship', id: items[0].id } : { kind: 'bundle', ids: items.map(item => item.id) };
+  const edgeDescription = (items: DisplayRelationship[]) => items.map(item => `${nodeNameFor(item.source)} [${item.sourceCardinality}] → ${item.name} → [${item.targetCardinality}] ${nodeNameFor(item.target)}`).join('; ');
+  function relationshipList(items: DisplayRelationship[]) {
+    return <ul className="modeling-detail-list">{items.map(item => <li key={item.id}><button type="button" aria-pressed={selection?.kind === 'relationship' && selection.id === item.id} onClick={event => inspect({ kind: 'relationship', id: item.id }, event.currentTarget)}>{edgeDescription([item])}{item.source === item.target ? ' (self-loop)' : ''}</button></li>)}</ul>;
   }
 
   const persistenceStatus = persistence.phase === 'loading' ? 'Loading model…'
     : persistence.phase === 'unavailable' ? 'Model unavailable · editing blocked'
       : persistence.creating ? 'Creating model…' : persistence.saving ? 'Saving model…' : persistence.id === null ? ''
-        : persistence.dirty ? 'Unsaved model changes' : '';
+        : persistence.dirty ? 'Unsaved model changes' : persistence.migrated ? 'Migrated in memory · Save to update' : '';
   const draftStatus = editable && hasDrafts ? 'Unfinished form drafts are not saved.' : '';
 
   const navigating = dragging || panning || detailsResize.resizing;
-  return <section className={`modeling${detailsResize.resizing ? ' modeling-resizing' : ''}`} aria-labelledby="modeling-title" onPointerDownCapture={event => {
+  return <IndexDraftContext.Provider value={{ model: persistence.graph, setModel: persistence.setGraph, drafts: indexDrafts, setDrafts: setIndexDrafts }}><section className={`modeling${detailsResize.resizing ? ' modeling-resizing' : ''}`} aria-labelledby="modeling-title" onPointerDownCapture={event => {
     suppressGestureClick.current = false;
     if (panClick.current) panClick.current.release = false;
     if (!event.isPrimary) { cancelPan(); cancelDrag(); }
@@ -1027,10 +1125,10 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     }
   }}>
     <header className="workspace-header"><div className="modeling-title-group" data-no-model={persistence.id === null}><div className="modeling-title-chip"><h1 id="modeling-title" title={persistence.name || undefined}>{persistence.id === null ? 'Data Modeling' : persistence.name}</h1></div>{persistence.id !== null && <button className="modeling-title-edit" type="button" aria-label="Edit model title" disabled={!editable || persistence.saving || navigating} onClick={() => openNameDialog('title')}><Icon icon={Pencil} /></button>}</div><div className="modeling-actions">
-      <button ref={browseButton} className="button primary" aria-haspopup="dialog" disabled={Boolean(dialog || naming || browserOpen || persistence.saving || navigating || persistence.phase === 'loading')} onClick={() => { if (canNavigate()) onBrowse(); }}>All Models</button>
       <button className="button secondary" disabled={!editable || navigating} onClick={() => requestAddition('node')}><Icon icon={Plus} /> Add node label</button>
       <button className="button secondary" disabled={!editable || navigating} onClick={() => requestAddition('relationship')}><Icon icon={Plus} /> Add relationship</button>
-      <button className="button secondary" disabled={!editable || persistence.id === null || !persistence.dirty || persistence.saving || persistence.conflict || navigating} onClick={() => void saveCurrentModel()}>Save model</button>
+      <button className="button secondary" disabled={!editable || persistence.id === null || (!persistence.dirty && !persistence.migrated) || persistence.saving || persistence.conflict || navigating} onClick={() => void saveCurrentModel()}>Save model</button>
+      <ModelOperations modelId={persistence.id} model={persistence.graph} catalog={catalog.models} disabled={!editable || persistence.deleting || navigating || Boolean(dialog || naming || modelsModal)} onChange={persistence.setGraph} propertiesDrafts={propertiesDrafts} nameDrafts={nameDrafts} onPropertyRows={(id, rows) => setPropertiesDrafts(current => ({ ...current, [id]: rows }))} onNameDraft={(id, draft) => setNameDrafts(current => ({ ...current, [id]: draft }))} />
     </div></header>
     {(persistence.error || persistence.phase === 'unavailable' || persistence.failedLoadId || persistence.conflict) && <div className="modeling-persistence">
       {persistence.error && <p className="modeling-error" role="alert">{persistence.error}</p>}
@@ -1040,10 +1138,13 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
       <div className="modeling-stage" style={{ '--modeling-canvas-height': `${canvas.availableHeight}px` } as CSSProperties}>
         <div className="modeling-stage-heading"><div className="modeling-stage-title"><h2>Graph canvas</h2><p className="modeling-status" role="status" aria-live="polite" title={[persistenceStatus, draftStatus].filter(Boolean).join(' · ')}>{[persistenceStatus, draftStatus].filter(Boolean).join(' · ')}</p></div><span>{nodes.length} nodes · {relationships.length} relationships</span><details className="modeling-help"><summary>Canvas help</summary><p tabIndex={0}>Movement snaps to the grid. Drag the thin ring to a target, then name the relationship. Drop a ring on empty canvas to name a new node, then its relationship. If that grid point is occupied, the nearest free point is used. Hold near any canvas edge to scroll while moving or connecting. Escape cancels a drag. For keyboard or manual entry, use Add relationship. Focus a node and use arrow keys to move; hold Shift for larger steps. Open Relationship bundles at the bottom of the canvas to list bundled types.</p></details></div>
         {groups.some(group => !group.geometry && !group.separate.length) && <p className="modeling-route-warning" role="status">Some arrows have no clear route within the bounded routing search. Move nodes closer or apart to help show them; affected relationships are listed below.</p>}
-        <div ref={contentRow} className="modeling-content-row" data-details-open={Boolean(selection)} style={{ '--modeling-details-width': `${detailsResize.width}px` } as CSSProperties}>
+        <div ref={contentRow} className="modeling-content-row" data-models-open={browserOpen} data-details-open={detailsVisible} style={{ '--modeling-details-width': `${detailsWidth}px`, '--modeling-models-width': '320px' } as CSSProperties}>
+        <div className="modeling-models-rail" hidden={browserOpen}>
+          <button ref={modelsExpand} type="button" className="modeling-models-expand modeling-details-close" title="Expand models" aria-label="Expand models" aria-expanded={browserOpen} aria-controls="canvas-models-panel" disabled={Boolean(dialog || naming || navigating || persistence.saving || persistence.creating || persistence.deleting || persistence.phase === 'loading')} onClick={() => { if (canNavigate()) onBrowse(); }}><Icon icon={PanelLeftOpen} /></button>
+        </div>
         <div ref={regionRef} className="modeling-canvas-region">
           {!nodes.length && <div className="modeling-empty"><Icon icon={CircleDashed} /><strong>{editable ? 'No node labels' : 'Model unavailable'}</strong></div>}
-        <div ref={scrollRef} className={`modeling-canvas-scroll${panning ? ' modeling-panning' : ''}`} tabIndex={0} aria-label="Graph canvas, drag empty canvas or scroll to pan" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={finishPan} onPointerCancel={event => { if (pan.current?.pointerId === event.pointerId) cancelPan(); }} onLostPointerCapture={event => { if (event.target === event.currentTarget && pan.current?.pointerId === event.pointerId) cancelPan(); }} onClick={event => {
+        <div ref={scrollRef} inert={persistence.deleting || persistence.creating || persistence.phase === 'loading'} className={`modeling-canvas-scroll${panning ? ' modeling-panning' : ''}`} tabIndex={0} aria-label="Graph canvas, drag empty canvas or scroll to pan" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={finishPan} onPointerCancel={event => { if (pan.current?.pointerId === event.pointerId) cancelPan(); }} onLostPointerCapture={event => { if (event.target === event.currentTarget && pan.current?.pointerId === event.pointerId) cancelPan(); }} onClick={event => {
           if (event.button === 0 && (event.target === event.currentTarget || (event.target as Element).classList.contains('modeling-canvas'))) clearSelection();
         }}>
           <div className={`modeling-canvas${showGrid ? ' modeling-canvas-grid' : ''}`} style={{ width: canvasWidth * displayScale + canvas.originX * 2, height: canvasHeight * displayScale + canvas.originY * 2, '--modeling-grid-size': `${GRID_STEP * displayScale}px`, backgroundPosition: `${canvas.originX}px ${canvas.originY}px` } as CSSProperties}>
@@ -1056,17 +1157,17 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
             }} onClick={event => {
               if (event.button === 0 && event.target === event.currentTarget) clearSelection();
             }} onDoubleClick={addNodeAtCanvas}>
-              <defs><pattern id="model-grid" x={-GRID_STEP / 2} y={-GRID_STEP / 2} width={GRID_STEP} height={GRID_STEP} patternUnits="userSpaceOnUse"><circle cx={GRID_STEP / 2} cy={GRID_STEP / 2} r=".8" className="modeling-grid-dot" /></pattern><marker id="model-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
+              <defs><pattern id="model-grid" x={-GRID_STEP / 2} y={-GRID_STEP / 2} width={GRID_STEP} height={GRID_STEP} patternUnits="userSpaceOnUse"><circle cx={GRID_STEP / 2} cy={GRID_STEP / 2} r=".8" className="modeling-grid-dot" /></pattern><marker id="model-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
               {drawn.map(({ group, geometry, item, suffix }) => {
                   const reverse = group.from.id !== group.to.id && (item ? item.source === group.to.id : group.items.some(edge => edge.source === group.to.id));
                   const forward = !item || item.source === group.from.id;
                   const items = item ? [item] : group.items;
                   return <g key={`${group.source}-${group.target}-${suffix}`} className={edgeSelected(items) ? 'modeling-edge-selected' : undefined}><path aria-hidden="true" className={`modeling-edge${group.from.id === group.to.id ? ' modeling-loop' : ''}`} d={geometry.path} markerStart={reverse ? 'url(#model-arrow)' : undefined} markerEnd={forward ? 'url(#model-arrow)' : undefined} /><path className="modeling-edge-hit" d={geometry.path} role="button" tabIndex={0} aria-label={`${edgeDescription(items)}. Enter for details.`} aria-pressed={edgeSelected(items)} onClick={event => inspect(edgeSelection(items), event.currentTarget)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inspect(edgeSelection(items), event.currentTarget); } }} /></g>;
               })}
-              {placed.map(({ group, item, suffix, text, badge, origin }) => {
-                  const description = (item ? [item] : group.items).map(edge => `${nodes.find(node => node.id === edge.source)?.name} → ${edge.name} → ${nodes.find(node => node.id === edge.target)?.name}`).join('; ');
+              {placed.map(({ group, item, suffix, lines, badge, origin }) => {
                   const items = item ? [item] : group.items;
-                  return <g key={`${group.source}-${group.target}-${suffix}`} className={edgeSelected(items) ? 'modeling-edge-selected' : undefined}><title>{description}</title><line aria-hidden="true" className="modeling-badge-leader" x1={origin.x} y1={origin.y} x2={badge.x} y2={badge.y} /><g className="modeling-edge-badge" role="button" tabIndex={0} aria-label={`${description}. Enter for details.`} aria-pressed={edgeSelected(items)} onClick={event => inspect(edgeSelection(items), event.currentTarget)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inspect(edgeSelection(items), event.currentTarget); } }} transform={`translate(${badge.x} ${badge.y})`}><rect x={-badge.width / 2} y={-12} width={badge.width} height={24} rx={5} /><text textAnchor="middle" dominantBaseline="central">{text}</text></g></g>;
+                  const description = edgeDescription(items);
+                  return <g key={`${group.source}-${group.target}-${suffix}`} className={edgeSelected(items) ? 'modeling-edge-selected' : undefined}><title>{description}</title><line aria-hidden="true" className="modeling-badge-leader" x1={origin.x} y1={origin.y} x2={badge.x} y2={badge.y} /><g className="modeling-edge-badge" role="button" tabIndex={0} aria-label={`${description}. Enter for details.`} aria-pressed={edgeSelected(items)} onClick={event => inspect(edgeSelection(items), event.currentTarget)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inspect(edgeSelection(items), event.currentTarget); } }} transform={`translate(${badge.x} ${badge.y})`}><rect x={-badge.width / 2} y={-badge.height / 2} width={badge.width} height={badge.height} rx={5} /><text aria-hidden="true" textAnchor="middle" dominantBaseline="central">{lines.map((line, index) => <tspan key={index} x={0} y={(index - (lines.length - 1) / 2) * 16}>{line}</tspan>)}</text></g></g>;
               })}
               {preview && (() => {
                 const from = nodes.find(node => node.id === preview.source);
@@ -1079,7 +1180,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
                 return <g aria-hidden="true" className="modeling-preview"><line x1={start.x} y1={start.y} x2={tip.x} y2={tip.y} markerEnd="url(#model-arrow)" />{to && <circle data-draft={displayDraft(to)} cx={to.x} cy={to.y} r={RADIUS + 4} />}</g>;
               })()}
               {nodes.map(node => {
-                const lines = labelLines(node.name);
+                const lines = labelLines(node.kind === 'definition' ? node.displayName || node.name : node.name);
                 const resolution = node.kind === 'reference' ? resolutionFor(node) : null;
                 const status = resolution ? `${resolution.status} · ${resolution.modelName} · ${resolution.definition?.name ?? (node.kind === 'reference' ? node.target.nodeId : '')}` : displayDraft(node) ? 'Draft' : 'not draft';
                 const ReferenceIcon = node.classification === 'External Reference' ? ExternalLink : Link;
@@ -1095,16 +1196,43 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
             </svg>
           </div>
         </div>
+        <div ref={legendTools} className="modeling-canvas-tools" style={{ '--modeling-controls-height': `${controlsHeight}px` } as CSSProperties} onFocusCapture={() => {
+          const bundles = regionRef.current?.querySelector<HTMLDetailsElement>('.modeling-bundles');
+          if (bundles) bundles.open = false;
+        }} onKeyDown={event => {
+          if (event.key !== 'Escape' || !legendOpen || dialog || naming || modelsModal || drag.current || pan.current || detailsResize.gesture.current || event.defaultPrevented) return;
+          event.preventDefault(); event.stopPropagation();
+          setLegendOpen(false);
+          legendButton.current?.focus({ preventScroll: true });
+        }}>
+        {legendOpen && <aside id="canvas-classification-legend" className="modeling-canvas-legend" aria-label="Classification legend" tabIndex={0}>
+          <h3>Legend</h3>
+          <ul>{[...classifications, 'Internal Reference', 'External Reference'].map(classification => <li key={classification}><span className="modeling-name-row modeling-legend-swatch" data-classification={classification} aria-hidden="true" />{classification}</li>)}</ul>
+        </aside>}
         <div ref={controlsRef} className="modeling-canvas-controls" role="toolbar" aria-label="Canvas controls">
           <button type="button" aria-label="Zoom out" title="Zoom out" disabled={navigating || zoom <= .5} onClick={() => changeZoom(zoom - .25)}><Icon icon={ZoomOut} /></button>
           <output aria-label="Canvas zoom" aria-live="polite">{Math.round(zoom * 100)}%</output>
           <button type="button" aria-label="Zoom in" title="Zoom in" disabled={navigating || zoom >= 2} onClick={() => changeZoom(zoom + .25)}><Icon icon={ZoomIn} /></button>
           <button type="button" aria-label="Reset zoom" title="Reset zoom to 100%" disabled={navigating || zoom === 1} onClick={() => changeZoom(1)}><Icon icon={RotateCcw} /></button>
           <button type="button" className="modeling-grid-toggle" aria-pressed={showGrid} disabled={navigating} onClick={() => { if (canNavigate()) setShowGrid(current => !current); }}><Icon icon={Grid2X2} />{showGrid ? 'Hide grid' : 'Show grid'}</button>
+          <button ref={legendButton} type="button" aria-label="Canvas legend" title="Canvas legend" aria-expanded={legendOpen} aria-controls="canvas-classification-legend" disabled={navigating} onClick={() => setLegendOpen(current => !current)}><Icon icon={Info} /></button>
         </div>
-        {groups.some(group => !group.separate.length && (group.items.length > 1 || !group.geometry)) && <details className="modeling-bundles"><summary>Relationship bundles</summary><div className="modeling-bundle-list">{groups.filter(group => !group.separate.length && (group.items.length > 1 || !group.geometry)).map(group => <details key={group.number} className="modeling-summary" open><summary>{group.geometry ? `Bundle ${group.number} · ${group.items.length} types` : 'Unrouted relationships'}: {group.from.name} {group.from.id === group.to.id ? '↻' : '↔'} {group.to.name}</summary>{!group.geometry && <p className="modeling-unrouted">Arrow not shown: no clear route</p>}{relationshipList(group.items)}</details>)}</div></details>}
+        </div>
+        {groups.some(group => !group.separate.length && (group.items.length > 1 || !group.geometry)) && <details className="modeling-bundles" onFocusCapture={() => setLegendOpen(false)}><summary>Relationship bundles</summary><div className="modeling-bundle-list">{groups.filter(group => !group.separate.length && (group.items.length > 1 || !group.geometry)).map(group => <details key={group.number} className="modeling-summary" open><summary>{group.geometry ? `Bundle ${group.number} · ${group.items.length} types` : 'Unrouted relationships'}: {group.from.name} {group.from.id === group.to.id ? '↻' : '↔'} {group.to.name}</summary>{!group.geometry && <p className="modeling-unrouted">Arrow not shown: no clear route</p>}{relationshipList(group.items)}</details>)}</div></details>}
       </div>
-      {selection && <dialog ref={detailsRef} className="modeling-details" role={narrowDetails ? 'dialog' : 'region'} aria-modal={narrowDetails ? true : undefined} aria-labelledby="modeling-details-title" onPointerDown={event => {
+      <dialog ref={modelsPanel} id="canvas-models-panel" className="modeling-models" role={narrowDetails ? 'dialog' : 'region'} aria-modal={narrowDetails ? true : undefined} aria-labelledby="canvas-models-title" onCancel={event => { event.preventDefault(); collapseModels(); }} onKeyDown={event => {
+        if (dialog || naming || drag.current || pan.current || detailsResize.gesture.current || event.defaultPrevented) return;
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); collapseModels(); return; }
+        if (!narrowDetails || event.key !== 'Tab') return;
+        const controls = dialogControls(event.currentTarget);
+        const first = controls[0], last = controls.at(-1);
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === modelsHeading.current)) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }}>
+        <header className="modeling-details-header"><h2 ref={modelsHeading} id="canvas-models-title" tabIndex={-1}>All Models</h2><button type="button" className="modeling-details-close" title="Collapse models" aria-label="Collapse models" aria-expanded={browserOpen} aria-controls="canvas-models-panel" disabled={Boolean(dialog || naming || persistence.saving || persistence.creating || persistence.deleting || persistence.phase === 'loading')} onClick={collapseModels}><Icon icon={PanelLeftClose} /></button></header>
+        <div className="modeling-models-content">{children}</div>
+      </dialog>
+      {selection && <dialog ref={detailsRef} inert={persistence.deleting || persistence.creating || persistence.phase === 'loading'} className="modeling-details" role={narrowDetails ? 'dialog' : 'region'} aria-modal={narrowDetails ? true : undefined} aria-labelledby="modeling-details-title" onPointerDown={event => {
         backdropGesture.current = narrowDetails && !dialog && event.button === 0 && event.isPrimary && outsideDetails(event)
           ? { pointerId: event.pointerId, start: { x: event.clientX, y: event.clientY }, moved: false, ended: false } : null;
       }} onPointerMove={event => {
@@ -1120,6 +1248,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
         if (narrowDetails && event.button === 0 && gesture?.ended && outsideDetails(event)) clearSelection();
       }} onCancel={event => { event.preventDefault(); closeDetails(); }} onKeyDown={event => {
         if (!narrowDetails || dialog || event.key !== 'Tab') return;
+        if (event.target instanceof Element && event.target.closest('dialog') !== event.currentTarget) return;
         const controls = dialogControls(event.currentTarget);
         const first = controls[0], last = controls.at(-1);
         if (event.shiftKey && (document.activeElement === first || document.activeElement === detailsHeading.current)) {
@@ -1133,30 +1262,36 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
         }} onKeyDown={event => {
           if (!drag.current && !pan.current) detailsResize.separator.onKeyDown(event);
         }} />
-        <header className="modeling-details-header"><div><p>{selectedNode ? 'Node label' : selectedRelationship ? 'Relationship' : 'Relationship bundle'}</p><h2 ref={detailsHeading} tabIndex={-1} id="modeling-details-title">{selectedNode?.name ?? selectedRelationship?.name ?? `${selection.kind === 'bundle' ? selection.ids.length : 0} relationships`}</h2></div><div className="modeling-details-actions">
-          <button type="button" className="modeling-details-close" aria-label="Narrower details" title="Narrower details" aria-disabled={!detailsResize.canNarrow} onClick={() => { if (detailsResize.canNarrow) detailsResize.stepWidth(-1); }}><Icon icon={ChevronRight} /></button>
-          <button type="button" className="modeling-details-close" aria-label="Wider details" title="Wider details" aria-disabled={!detailsResize.canWiden} onClick={() => { if (detailsResize.canWiden) detailsResize.stepWidth(1); }}><Icon icon={ChevronLeft} /></button>
+        <header className="modeling-details-header"><div><p>{selectedNode ? 'Node label' : selectedRelationship ? 'Relationship' : 'Relationship bundle'}</p><h2 ref={detailsHeading} tabIndex={-1} id="modeling-details-title">{selectedType?.kind === 'definition' ? <RelationshipTypeName key={selectedType.id} heading type={selectedType} model={persistence.graph} onChange={persistence.setGraph} disabled={!active || !editable || persistence.phase !== 'ready'} draft={nameDrafts[selectedType.id]} onDraft={draft => setNameDrafts(current => ({ ...current, [selectedType.id]: draft }))} /> : selectedNode?.name ?? selectedTypeName ?? `${selection.kind === 'bundle' ? selection.ids.length : 0} relationships`}</h2></div>
           <button type="button" className="modeling-details-close" aria-label="Close details" onClick={closeDetails}><Icon icon={X} /></button>
-        </div></header>
+        </header>
         <div className="modeling-details-content" tabIndex={0} role="group" aria-label="Details content">
-          {selectedNode && <div className="modeling-node-position" role="group" aria-label="Node position">
-            {([{ name: 'left', dx: -1, dy: 0, icon: ArrowLeft }, { name: 'up', dx: 0, dy: -1, icon: ArrowUp }, { name: 'down', dx: 0, dy: 1, icon: ArrowDown }, { name: 'right', dx: 1, dy: 0, icon: ArrowRight }] as const).map(direction => <button key={direction.name} type="button" className="modeling-details-close" aria-label={`Move node ${direction.name}`} title={`Move node ${direction.name}`} disabled={!editable || persistence.saving || navigating || Boolean(dialog || naming || browserOpen)} onClick={event => moveSelectedNode(direction.dx, direction.dy, event.shiftKey)}><Icon icon={direction.icon} /></button>)}
-          </div>}
           {selectedNode && <><NodeNameChip key={selectedNode.id} node={{ ...selectedNode, draft: displayDraft(selectedNode) }} draft={nameDrafts[selectedNode.id]} disabled={!editable} inputRef={renameInput}
             onDraft={draft => setNameDrafts(current => ({ ...current, [selectedNode.id]: draft }))}
-            onCommit={value => commitNodeName(selectedNode.id, value)} onDraftToggle={selectedNode.kind === 'definition' ? draft => updateNodeMetadata({ draft }) : undefined} />{selectedNode.kind === 'reference' ? <ReadOnlyReferenceDetails reference={selectedNode} resolution={resolutionFor(selectedNode)} loading={catalog.loading} error={catalog.error} onRefresh={() => void catalog.refresh()} /> : <><div className="modeling-node-metadata">
+            onCommit={value => commitNodeName(selectedNode.id, value)} onDraftToggle={selectedNode.kind === 'definition' ? draft => updateNodeMetadata({ draft }) : undefined} />{selectedNode.kind === 'reference' ? <>{(() => {
+              const target = selectedNode.target;
+              const foreign = catalog.models.find(model => model.id === target.modelId);
+              const owner: ModelInput = target.modelId === persistence.id ? persistence.graph : foreign?.available ? { schemaVersion: 3, nodes: foreign.definitions.map(node => ({ ...node, x: 60, y: 60 })), relationships: [], relationshipTypes: foreign.relationshipTypes, constraints: foreign.constraints, indexes: foreign.indexes } : { schemaVersion: 3, nodes: [], relationships: [], relationshipTypes: [], constraints: [], indexes: [] };
+              return <ReadOnlyReferenceDetails reference={selectedNode} resolution={resolutionFor(selectedNode)} model={owner} constraints={owner.constraints} loading={catalog.loading} error={catalog.error} onRefresh={() => void catalog.refresh()} />;
+            })()}<label>Retarget definition<select value={`${selectedNode.target.modelId}/${selectedNode.target.nodeId}`} onChange={event => {
+              const [modelId, nodeId] = event.target.value.split('/'); setNodes(current => current.map(node => node.id === selectedNode.id && node.kind === 'reference' ? { ...node, classification: modelId === persistence.id ? 'Internal Reference' : 'External Reference', target: { modelId, nodeId } } : node));
+            }}><option value={`${selectedNode.target.modelId}/${selectedNode.target.nodeId}`}>{resolutionFor(selectedNode).definition?.name ?? selectedNode.target.nodeId}</option><optgroup label="Current model">{nodes.filter(node => node.kind === 'definition').map(node => <option key={node.id} value={`${persistence.id}/${node.id}`}>{node.name}</option>)}</optgroup>{catalog.models.filter(model => model.id !== persistence.id).map(model => model.available && <optgroup key={model.id} label={model.name}>{model.definitions.map(node => <option key={node.id} value={`${model.id}/${node.id}`}>{node.name}</option>)}</optgroup>)}</select></label></> : <><div className="modeling-node-metadata">
             <label htmlFor="model-node-classification">Data classification</label>
             <select id="model-node-classification" disabled={!editable} value={selectedNode.classification} onChange={event => updateNodeMetadata({ classification: event.target.value as DataClassification })}>{classifications.map(value => <option key={value} value={value}>{value}</option>)}</select>
-          </div><NodeProperties key={`properties-${selectedNode.id}`} rows={propertiesDrafts[selectedNode.id] ?? []} disabled={!editable}
+          </div><DefinitionLabels key={selectedNode.id} definition={selectedNode} onChange={updateNodeMetadata} label={labelDrafts[selectedNode.id] ?? ''} onLabel={value => setLabelDrafts(current => ({ ...current, [selectedNode.id]: value }))} /><NodeProperties key={`properties-${selectedNode.id}`} rows={propertiesDrafts[selectedNode.id] ?? []} disabled={!editable}
+            model={persistence.graph} target={{ kind: 'node', definitionId: selectedNode.id }} constraints={persistence.constraints} indexes={persistence.indexes} onConstraints={persistence.setConstraints} onSchema={(constraints, indexes) => persistence.setGraph(current => ({ ...current, constraints, indexes }))}
             onRows={rows => setPropertiesDrafts(current => ({ ...current, [selectedNode.id]: rows }))}
-            onCommit={properties => { if (editable) setNodes(current => current.map(node => node.id === selectedNode.id && node.kind === 'definition' ? { ...node, properties } : node)); }}
+            onCommit={(properties, rename) => { if (editable) persistence.setGraph(current => {
+              const next = rename ? renamePropertySchema(current, { kind: 'node', definitionId: selectedNode.id }, rename.oldName, rename.newName) : current;
+              return { ...next, nodes: next.nodes.map(node => node.id === selectedNode.id && node.kind === 'definition' ? { ...node, properties } : node) };
+            }); }}
             onAnnounce={setAnnouncement} /></>}</>}
           {selectedRelationship && <div className="modeling-relationship-details">
             {(['source', 'target'] as const).map(end => {
               const label = end === 'source' ? 'From' : 'To';
               const field = end === 'source' ? 'sourceCardinality' : 'targetCardinality';
               return <div key={end} className="modeling-relationship-end">
-                <dl className="modeling-detail-endpoints"><dt>{label}</dt><dd>{nodeNameFor(selectedRelationship[end])}</dd></dl>
+                <label>{label}<select value={selectedRelationship[end]} onChange={event => editRelationship(selectedRelationship, { [end]: event.target.value }, label)}>{nodes.map(node => <option key={node.id} value={node.id}>{node.name}</option>)}</select></label>
                 <label htmlFor={`model-relationship-${end}-cardinality`}>{label} cardinality</label>
                 <div className="modeling-cardinality-select">
                   <select id={`model-relationship-${end}-cardinality`} disabled={!editable || persistence.phase !== 'ready'} value={selectedRelationship[field]} onChange={event => updateRelationshipCardinality(selectedRelationship.id, field, event.target.value as RelationCardinality)}>
@@ -1166,7 +1301,17 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
                 </div>
               </div>;
             })}
+            <label>Relationship type<select value={selectedRelationship.relationshipTypeId} onChange={event => editRelationship(selectedRelationship, { relationshipTypeId: event.target.value }, 'Relationship type')}>{relationshipTypes.map(type => <option key={type.id} value={type.id}>{type.name}</option>)}</select></label>
+            {edgeEditError?.id === selectedRelationship.id && <p className="modeling-error" role="alert">{edgeEditError.message}</p>}
+            {(() => { const type = selectedType; return type && <RelationshipTypeDetails nameInHeader key={type.id} type={type} model={persistence.graph} modelId={persistence.id} catalog={catalog.models} onChange={persistence.setGraph} rows={propertiesDrafts[type.id]} onRows={rows => setPropertiesDrafts(current => ({ ...current, [type.id]: rows }))} draft={nameDrafts[type.id]} onDraft={draft => setNameDrafts(current => ({ ...current, [type.id]: draft }))} onAnnounce={setAnnouncement} />; })()}
           </div>}
+          {(selectedNode || selectedRelationship) && <button type="button" className="button secondary" onClick={() => {
+            const remainingDrafts = selectedNode ? pruneIndexDrafts(indexDrafts, { kind: 'node', definitionId: selectedNode.id }) : indexDrafts;
+            const discardsIndexes = Object.keys(remainingDrafts).length < Object.keys(indexDrafts).length;
+            if (!window.confirm(selectedNode ? `Delete “${selectedNode.name}” and its incident relationships?${discardsIndexes ? ' Discard its unfinished index forms?' : ''}` : 'Delete relationship?')) return;
+            if (selectedNode) setIndexDrafts(current => pruneIndexDrafts(current, { kind: 'node', definitionId: selectedNode.id }));
+            persistence.setGraph(current => selectedNode ? { ...current, nodes: current.nodes.filter(node => node.id !== selectedNode.id), relationships: current.relationships.filter(edge => edge.source !== selectedNode.id && edge.target !== selectedNode.id), constraints: current.constraints.filter(item => item.target.kind !== 'node' || item.target.definitionId !== selectedNode.id), indexes: current.indexes.filter(item => !item.targets.some(target => target.kind === 'node' && target.definitionId === selectedNode.id)) } : { ...current, relationships: current.relationships.filter(edge => edge.id !== selectedRelationship!.id) }); closeDetails();
+          }}>Delete {selectedNode ? 'node' : 'relationship'}</button>}
           {selection.kind === 'bundle' && relationshipList(relationships.filter(item => selection.ids.includes(item.id)))}
         </div>
       </dialog>}
@@ -1198,11 +1343,12 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
         <div className="dialog-actions"><div className="action-spacer" /><button className="button secondary" type="button" onClick={closeNodeDialog}>Close</button><button className="button primary" type="submit">Add node label</button></div>
       </form>
     </Dialog>}
-    {dialog === 'relationship' && <Dialog key="relationship" title="Add relationship" subtitle="Connect node labels in a direction, including a label to itself. Closing keeps your unfinished entry and any newly added node in this session." onClose={() => setDialog(null)}>
+    {dialog === 'relationship' && <Dialog key="relationship" title="Add relationship" onClose={() => setDialog(null)}>
       <form className="modeling-form" onSubmit={addRelationship} noValidate>
-        <label htmlFor="model-relationship-name">Relationship name</label>
-        <input ref={relationshipInput} id="model-relationship-name" data-dialog-initial-focus value={relationshipName} onChange={event => changeRelationshipName(event.target)} placeholder="e.g. WORKS_AT" aria-describedby={`model-relationship-hint${relationshipError?.field === 'name' ? ' model-relationship-error' : ''}`} aria-invalid={relationshipError?.field === 'name'} />
-        <p className="modeling-hint" id="model-relationship-hint">{relationshipNameHint}</p>
+        <label htmlFor="model-type">Type</label><select id="model-type" value={chosenType} onChange={event => setChosenType(event.target.value)}><option value="">New relationship type</option><optgroup label="Current model">{relationshipTypes.map(type => <option key={type.id} value={type.id}>{type.name}</option>)}</optgroup>{catalog.models.filter(model => model.id !== persistence.id).map(model => model.available && <optgroup key={model.id} label={model.name}>{model.relationshipTypes.map(type => <option key={type.id} value={`catalog:${model.id}/${type.id}`}>{type.name}</option>)}</optgroup>)}</select>
+        <label htmlFor="model-relationship-name">New type name</label>
+        <input ref={relationshipInput} id="model-relationship-name" data-dialog-initial-focus disabled={Boolean(chosenType)} value={relationshipName} onChange={event => changeRelationshipName(event.target)} placeholder="e.g. WORKS_AT" aria-describedby={`model-relationship-hint${relationshipError?.field === 'name' ? ' model-relationship-error' : ''}`} aria-invalid={relationshipError?.field === 'name'} />
+        <p className="modeling-hint" id="model-relationship-hint">Neo4j identifier</p>
         <label htmlFor="model-source">From</label>
         <select ref={sourceInput} id="model-source" value={source} aria-invalid={relationshipError?.field === 'source'} aria-describedby={relationshipError?.field === 'source' ? 'model-relationship-error' : undefined} onChange={event => { setSource(event.target.value); if (relationshipError?.field === 'source') setRelationshipError(null); }}><option value="">Select source</option>{nodes.map(node => <option value={node.id} key={node.id}>{node.name}</option>)}</select>
         <label htmlFor="model-target">To</label>
@@ -1212,5 +1358,5 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
         <div className="dialog-actions"><div className="action-spacer" /><button className="button secondary" type="button" onClick={() => setDialog(null)}>Close</button><button className="button primary" type="submit">Add relationship</button></div>
       </form>
     </Dialog>}
-  </section>;
+  </section></IndexDraftContext.Provider>;
 }

@@ -1,0 +1,19 @@
+.property-index-menu > summary { min-height: 44px; align-content: center; cursor: pointer; white-space: nowrap; }
+.node-properties-scroll:has(.property-index-menu) { container-type: inline-size; }
+.property-index-body { width: min(320px, calc(100cqw - 24px)); white-space: normal; }
+.property-index-list { list-style: none; margin: 0; padding: 0; }
+.property-index-list > li { padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.property-index-list dl { margin: 8px 0; }
+.property-index-list dd { margin: 4px 0 12px; }
+.property-index-list ol { padding-left: 24px; }
+.property-index-list pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.property-index-list code { display: block; overflow-wrap: anywhere; }
+.property-index-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
+.index-editor { min-width: 0; white-space: normal; }
+.index-editor .index-editor-fields { display: flex; flex-direction: column; gap: 10px; padding: 0; border: 0; margin: 12px 0; min-width: 0; }
+.index-editor :is(input[type=text], select, textarea) { width: 100%; min-width: 0; max-width: 100%; }
+.index-editor :is(label, legend, li) { overflow-wrap: anywhere; }
+.index-editor .schema-inline { display: flex; flex-wrap: wrap; gap: 8px; }
+.index-editor .schema-inline select { flex: 1 1 180px; }
+.index-editor .schema-checkbox { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.index-editor :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

@@ -2,7 +2,7 @@
 // https://neo4j.com/docs/cypher-manual/current/values-and-types/property-structural-constructed/
 // Property lists are homogeneous, contain no nulls, and cannot contain VECTOR.
 // Byte arrays are pass-through values, not a first-class Cypher type; omitted.
-// VECTOR is a generic annotation here (no dimension/coordinate configuration).
+// VECTOR coordinates and dimensions are configured in PropertyTypeEditor.
 // Vector property storage requires Enterprise block format or Aura, not Community.
 export const scalarPropertyDataTypes = [
   'BOOLEAN', 'DATE', 'DURATION', 'FLOAT', 'INTEGER', 'LOCAL DATETIME',

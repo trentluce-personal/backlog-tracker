@@ -47,6 +47,7 @@ export function Dialog({ title, subtitle, children, busy = false, dirty = false,
   return (
     <dialog ref={ref} className="dialog" aria-labelledby={titleId} aria-describedby={subtitle ? subtitleId : undefined}
       onKeyDown={event => {
+        if (!(event.target instanceof Element) || event.target.closest('dialog') !== event.currentTarget) return;
         if (event.key !== 'Tab') return;
         const controls = dialogControls(ref.current!);
         const first = controls[0];
@@ -54,7 +55,7 @@ export function Dialog({ title, subtitle, children, busy = false, dirty = false,
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }}
-      onCancel={event => { event.preventDefault(); dismiss(); }}>
+      onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); dismiss(); }}>
       <div className="dialog-heading">
         <div><h2 id={titleId}>{title}</h2>{subtitle && <p id={subtitleId}>{subtitle}</p>}</div>
         <button className="icon-button close-button" type="button" onClick={dismiss} disabled={busy} aria-label="Close dialog"><Icon icon={X} /></button>

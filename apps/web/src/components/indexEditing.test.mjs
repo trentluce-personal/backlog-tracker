@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { associatedIndexes, indexDraftChanged, indexDraftKey, makeIndexDraft, pruneIndexDrafts, validateIndex } from './indexEditing.ts';
+
+const target = { kind: 'node', definitionId: 'node-0' };
+const other = { kind: 'node', definitionId: 'node-1' };
+const index = { id: 'index-0', name: 'shared', draft: false, kind: 'VECTOR', targets: [target, other], properties: ['embedding'], filterProperties: ['tenant'], config: { 'vector.dimensions': 128 } };
+const model = { schemaVersion: 3, nodes: [target, other].map(target => ({ kind: 'definition', id: target.definitionId, name: target.definitionId, properties: ['embedding', 'tenant'].map(name => ({ name, dataType: 'STRING', description: '' })) })), relationshipTypes: [], relationships: [], constraints: [], indexes: [index] };
+test('shared indexes retain identity on each embedding and VECTOR filter row, with exact target scope', () => {
+  for (const owner of [target, other]) for (const name of ['embedding', 'tenant']) assert.equal(associatedIndexes(name, owner, [index])[0], index);
+  assert.deepEqual(associatedIndexes('tenant', { ...target, kind: 'relationship' }, [index]), []);
+  assert.deepEqual(associatedIndexes('unrelated', target, [index]), []);
+  const composite = { ...index, kind: 'RANGE', targets: [target], properties: ['tenant', 'embedding'], filterProperties: [] };
+  assert.equal(associatedIndexes('tenant', target, [composite])[0], composite);
+  assert.equal(associatedIndexes('embedding', target, [composite])[0], composite);
+});
+test('index validation preserves ordered membership and config, and rejects invalid JSON, names and settings', () => {
+  const draft = makeIndexDraft(index, true);
+  assert.deepEqual(validateIndex(draft, model).value, index);
+  assert.ok(validateIndex({ ...draft, config: '{' }, model).error);
+  assert.ok(validateIndex({ ...draft, value: { ...index, name: '' } }, model).error);
+  assert.ok(validateIndex({ ...draft, value: { ...index, name: 'a'.repeat(16384) } }, model).error);
+  assert.ok(validateIndex(draft, { ...model, constraints: [{ name: index.name }] }).error);
+  assert.ok(validateIndex({ ...draft, config: '{"vector.dimensions":0}' }, model).error);
+  assert.ok(validateIndex({ ...draft, config: '{"vector.similarity_function":"invalid"}' }, model).error);
+  assert.ok(validateIndex({ ...draft, config: '{"fulltext.analyzer":"standard"}' }, model).error);
+  assert.ok(validateIndex(draft, { ...model, indexes: [] }).error);
+  assert.equal(draft.config, JSON.stringify(index.config, null, 2));
+});
+test('LOOKUP stays globally editable without associated rows; unavailable composites can be repaired', () => {
+  const lookup = { ...index, kind: 'LOOKUP', targets: [], properties: [], filterProperties: [], config: { entity: 'relationship' } };
+  assert.deepEqual(validateIndex(makeIndexDraft(lookup, true), { ...model, indexes: [lookup] }).value, lookup);
+  assert.deepEqual(associatedIndexes('embedding', target, [lookup]), []);
+  const unavailable = { ...index, properties: ['missing'] };
+  assert.ok(validateIndex(makeIndexDraft(unavailable, true), model).error);
+  const repaired = { ...index, targets: [other], properties: ['embedding'] };
+  assert.deepEqual(validateIndex(makeIndexDraft(repaired, true), { ...model, indexes: [repaired] }).value, repaired);
+});
+test('concurrent row/global index drafts reject stale snapshots and reload preserves newer config', () => {
+  const first = makeIndexDraft(index, true), second = makeIndexDraft(index, true);
+  const baseline = second.baseline;
+  first.config = '{"vector.dimensions":256}';
+  const applied = validateIndex(first, model).value;
+  const current = { ...model, indexes: [applied] };
+  second.value.name = 'renamed';
+  assert.match(validateIndex(second, current).error, /changed in another editor/);
+  assert.equal(second.baseline, baseline);
+  assert.equal(index.name, 'shared');
+  assert.equal(indexDraftChanged(second), true);
+  const reloaded = makeIndexDraft(applied, true);
+  assert.equal(indexDraftChanged(reloaded), false);
+  reloaded.value.name = 'renamed';
+  const renamed = validateIndex(reloaded, current).value;
+  assert.equal(renamed.name, 'renamed');
+  assert.deepEqual(renamed.config, { 'vector.dimensions': 256 });
+  assert.equal(validateIndex(makeIndexDraft(index, false), model).value, undefined);
+  assert.match(validateIndex(makeIndexDraft(index, true), { ...model, indexes: [] }).error, /no longer exists/);
+});
+test('stable row keys survive renames and deletion prunes only affected row or owner drafts', () => {
+  const rowKey = indexDraftKey(target, 'row-id');
+  const siblingKey = indexDraftKey(target, 'row-tenant');
+  const otherKey = indexDraftKey(other, 'row-id');
+  const typeKey = indexDraftKey({ kind: 'relationship', definitionId: 'relationship-type-0' }, 'row-id');
+  const drafts = Object.fromEntries([rowKey, siblingKey, otherKey, typeKey].map(key => [key, makeIndexDraft(index, true)]));
+  drafts[rowKey].value.name = 'unsaved rename';
+  assert.equal(indexDraftKey(target, 'row-id'), rowKey);
+  assert.deepEqual(Object.keys(pruneIndexDrafts(drafts, target, 'row-id')), [siblingKey, otherKey, typeKey]);
+  assert.deepEqual(Object.keys(pruneIndexDrafts(drafts, target)), [otherKey, typeKey]);
+  assert.equal(drafts[rowKey].value.name, 'unsaved rename');
+});
