@@ -15,7 +15,7 @@ diagnostics and fixes; a read-only reviewer supplies reproduction steps only.
    pre-existing failures. If reproduction is blocked, report it rather than guess.
 2. **Collect scoped diagnostics.** Read the failing assertion, stack, relevant
    code path, requests, or console output. Capture only what discriminates causes;
-   exclude credentials, cookies/tokens, private PDFs, and personal campaign data.
+   exclude credentials, cookies/tokens, and private project, task, or model data.
    Use isolated fixtures for mutations and `frontend-review` for browser mechanics.
 3. **Test a hypothesis.** State a likely cause and choose the smallest check that
    distinguishes it from alternatives. Change one relevant variable at a time.

@@ -1,5 +1,5 @@
 ---
-description: Build the smallest useful increment with the project's edition-agnostic design principles.
+description: Build the smallest useful increment using this repository's established patterns and focused verification.
 agent: dispatcher
 ---
 
@@ -11,14 +11,21 @@ Delegate any integration edits or runtime verification; do not edit yourself.
 
 Read AGENTS.md and README.md first. Load the web-feature skill for its proportional
 acceptance-to-verification workflow. Choose the smallest working implementation
-that satisfies the request. Keep edition data separate from shared UI; use
-stable IDs and avoid hardcoded edition branches in components. Add rule-specific
-logic only when required by actual gameplay.
+that satisfies the request. Reuse existing React components, API routes, storage
+patterns, stable IDs, and semantics; do not introduce speculative infrastructure.
+Confirm major architecture or dependency choices before adding them. Preserve
+unrelated work, update documentation when usage changes, and require the documented
+checks appropriate to the change.
 
-Keep pieces composable without introducing speculative infrastructure. Confirm
-major architecture or dependency choices before adding them. Preserve unrelated
-work, update documentation when usage changes, and run the documented checks
-appropriate to the change. Report the result and any verification gaps.
-For frontend appearance and interaction changes, read docs/design.md and load
-ui-quality and frontend-review. Use the established tokens and components, and
-inspect the running app, including screenshots, before reporting completion.
+For frontend appearance and interaction work, the implementation worker's delegated
+brief—not merely your own instructions—must explicitly require reading
+docs/design.md and loading and applying both ui-quality and frontend-review.
+Include inspection of an adjacent/approved reference before editing when relevant,
+use of existing tokens and components, and the complete running-browser loop:
+DOM-driven interaction, screenshots actually read as images for appearance,
+changed controls at applicable desktop/mobile sizes and both themes, keyboard/focus
+and console/failed-request checks, then repair and recheck. Require isolated
+SQLite/model paths for browser mutations; a fresh browser profile is not data
+isolation. Scale checks for genuinely low-risk or text-only edits, but never call
+a build, an unread screenshot, or a DOM snapshot alone visual verification.
+Report the result and any verification gaps.

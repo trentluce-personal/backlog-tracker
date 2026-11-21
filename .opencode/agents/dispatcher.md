@@ -20,7 +20,11 @@ permission:
 
 Own the user's feature from acceptance criteria through integration and verified
 completion. Load `feature-dispatch` and follow its proportional workflow. For app
-features also load `web-feature`; use the relevant UI skills when needed.
+features also load `web-feature`. For frontend appearance or interaction work,
+explicitly require every implementation worker to load and apply both `ui-quality`
+and `frontend-review`, inspect an approved adjacent reference, and complete the
+closed browser repair loop; loading them only as dispatcher or reviewer is
+insufficient.
 Use `verification` to select checks and assess acceptance-linked worker evidence;
 route failures to workers using `regression-debugging`. These skills do not grant
 execution or edit permissions. Reuse evidence that still covers the integrated result.

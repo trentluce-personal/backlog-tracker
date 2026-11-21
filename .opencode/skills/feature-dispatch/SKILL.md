@@ -6,8 +6,9 @@ description: Use when coordinating a feature across multiple agents or dispatchi
 # Feature dispatch
 
 Coordinate one feature with a few focused agents, not several competing full
-implementations. Read `AGENTS.md`, relevant README sections, and product/design
-context. For app features use `web-feature` as the acceptance and quality guide.
+implementations. Read `AGENTS.md`, relevant README sections, and repository/design
+context. For app features use `web-feature` as the acceptance and quality guide;
+for UI appearance or interaction use `docs/design.md` and the UI skills.
 
 The default `dispatcher` agent is read-only: it plans, assigns, inspects, and
 accepts the work. It delegates all edits and runtime checks to workers, including
@@ -28,8 +29,9 @@ For a substantial multi-aspect feature, normally use two implementation
 workstreams and one independent review after integration. Add another worker only
 for a clearly independent current need. Examples:
 
-- **UI/interaction:** components, styles, accessibility, responsive behavior.
-- **API/data:** routes, validation, permissions, transactions, migrations.
+- **UI/interaction:** components, styles, accessibility, responsive behavior,
+  themes, the running-browser repair loop, and viewed screenshot evidence.
+- **API/data:** routes, validation, request guards, transactions, or storage.
 - **Focused research:** existing behavior, compatibility, or a specific unknown.
 - **Verification/review:** acceptance gaps and regressions in integrated changes.
 
@@ -43,7 +45,7 @@ changes, the dispatcher delegates to one implementer with focused checks.
 ## 2. Establish boundaries before parallel edits
 
 Agree the shared contract first: endpoint and field names, success/error shapes,
-permissions, persisted formats, and UI expectations as applicable. Resolve
+request guards, persisted formats, and UI expectations as applicable. Resolve
 contract unknowns through focused research or one initial implementation before
 starting dependent work. Do not let agents invent incompatible contracts.
 
@@ -52,9 +54,9 @@ must include exclusions for shared files. The dispatcher controls assignments fo
 integration files, root manifests/lockfile, common documentation, and shared
 contracts; assign their edits explicitly to a worker. An existing worker can
 perform integration after the other writers finish, without adding another agent.
-Numbered migrations have one owner. Multiple agents may
-read the same files; read-only research/review can overlap implementation when
-its purpose is clear, but final review uses the integrated result.
+Schema or persisted-format changes have one owner. Multiple agents may read the
+same files; read-only research/review can overlap implementation when its purpose
+is clear, but final review uses the integrated result.
 
 Agents share this checkout: their edits are already present, not patches to
 cherry-pick. Never reset, stash, clean, or overwrite another worker's or the
@@ -64,23 +66,50 @@ Reconcile contract changes with affected owners before continuing dependent work
 
 ## 3. Send self-contained specialist briefs
 
-Every task invocation must include:
+Every implementation task invocation must include:
 
 ```text
 Role and goal: <specific aspect of this feature>
 Acceptance criteria: <observable outcomes and relevant failure cases>
 Shared contract: <agreed API/data/UI details; dependencies already ready>
 Write scope: <exclusive files/directories and explicit exclusions>
-Context: <relevant files, existing changes, decisions, and product constraints>
+Context: <relevant files, existing changes, decisions, and repository constraints>
 Mode: <implement within scope OR research/review only>
 Checks: <use verification for focused commands/scenarios, targets, and evidence>
 Coordination: Shared checkout. Preserve existing changes. Do not spawn agents,
-commit, push, change dependencies without explicit approved scope, or edit outside scope. Report blockers and
-needed cross-boundary changes to the dispatcher.
+commit, push, change dependencies without explicit approved scope, or edit outside
+scope. Report blockers and needed cross-boundary changes to the dispatcher.
 Return: Changed files, behavior delivered, acceptance-linked verification evidence,
 remaining risks/blockers, and integration notes. Distinguish observations from
 assumptions; do not claim checks you did not perform.
 ```
+
+For **every frontend appearance or interaction implementation worker**, also put
+the following UI-specific brief in that worker's own task invocation. Loading the
+skills only in the dispatcher, research, or read-only reviewer does not satisfy it:
+
+```text
+UI implementation requirements: Read AGENTS.md and docs/design.md. Load and apply
+both ui-quality and frontend-review yourself. Before editing, inspect the relevant
+adjacent/approved reference screen: <screen, route/state, approved artifact, or why
+not relevant>. Implement with the repository's existing tokens, components, and
+interaction patterns; do not redesign by taste.
+
+After implementation, run the actual app with the pinned npm run browser -- CLI.
+Use fresh DOM snapshots and their refs to exercise interactions, and take screenshots
+that you actually read as images to verify appearance. Exercise each changed control
+and state at applicable desktop/mobile sizes and in both light and dark themes;
+include keyboard/focus behavior, console errors, and failed requests. Use
+<scenario-specific states and artifacts>. Repair every observed issue within scope,
+then repeat the affected interactions and visual checks before reporting completion.
+A saved-but-unviewed screenshot, a successful build, or a DOM snapshot alone is not
+visual verification. Preserve proportionality for text-only or genuinely low-risk
+edits and state precisely what was or was not visually reviewed.
+```
+
+Give the worker verified-safe runtime targets under `verification`; require fresh
+per-session SQLite/model directories and alternate ports for browser mutations.
+Never imply that a fresh browser profile isolates persistent server writes.
 
 Launch independent tasks together. While agents work, inspect context, review
 contracts, and maintain the task list without duplicating their assignments.
@@ -91,37 +120,41 @@ a replacement writer while the original may still edit them.
 ## 4. Integrate and verify
 
 Read worker reports and inspect the actual scoped changes, including new files.
-Check both sides of each contract and assign cross-boundary wiring to a worker. Track
-partial work as incomplete until integrated and verified. Resolve failures with
-the responsible owner or hand ownership to another worker after that writer
+Check both sides of each contract and assign cross-boundary wiring to a worker.
+Track partial work as incomplete until integrated and verified. Resolve failures
+with the responsible owner or hand ownership to another worker after that writer
 finishes. The read-only dispatcher never takes write ownership itself.
 
-The dispatcher coordinates tests, migrations, fixture setup, server changes,
-dependency installs, and browser sessions to avoid shared-state collisions.
-Workers may run non-mutating scoped checks; give shared-state checks one owner
-at a time. Browser reviewers use distinct named sessions and artifact paths,
-and close only their own sessions. Run database-mutating verification only
-against isolated test data, never the main campaign database. The existing API
-runner shares `dndharness_test`, so serialize all suite invocations. Fresh browser
+The dispatcher coordinates tests, fixture setup, server changes, dependency
+installs, and browser sessions to avoid shared-state collisions. Workers may run
+non-mutating scoped checks; give shared-state checks one owner at a time. Browser
+workers use distinct named sessions and artifact paths and close only their own
+sessions. Run database/model-mutating verification only against verified isolated
+paths, never the default native data or normal Compose `app` data. Fresh browser
 profiles do not isolate persistent writes; use `verification` for target safety.
 
 Load `verification` to select integrated checks and inspect acceptance-linked
 worker evidence. Reuse evidence still applicable; delegate only checks needed for
 wiring, subsequent edits, failures, or unresolved concerns. Delegate failures with
 `regression-debugging`; the dispatcher never executes diagnostics or fixes itself.
+For UI defects, ensure the worker repairs and rechecks rather than merely reporting
+a screenshot or successful rebuild.
 
 ## 5. Independent review and completion
 
 For a nontrivial dispatched feature, use one `app-reviewer` pass after integration
 when available. Supply acceptance criteria, the exact changed-file scope,
-pre-existing-change context, shared contracts, and verification evidence. For
-harness changes, explicitly ask for delegation/permission/configuration and
-documentation consistency instead of application-specific checks. The reviewer
-does not edit or reproduce runtime checks; the dispatcher assigns reproduction
-and fixes to workers and inspects the resulting evidence.
+pre-existing-change context, shared contracts, verification evidence, and relevant
+artifact paths. Explicitly ask it to read supplied screenshots as images and to
+label them as supplied rather than self-executed runtime evidence. For harness
+changes, ask for delegation/permission/configuration and documentation consistency
+instead of application-specific runtime checks. The reviewer does not edit or
+reproduce runtime checks; the dispatcher assigns reproduction and fixes to workers
+and inspects the resulting evidence.
 
-Assign material findings and affected checks to workers, inspect their resolution, and use a focused follow-up
-only if an unresolved finding warrants it. If no independent reviewer is
-available, self-review and disclose it. Summarize the delivered behavior,
-workstreams used, checks actually performed, and remaining gaps. Do not equate
-agent agreement with correctness. Commits, pushes, and PRs need user instruction.
+Assign material findings and affected checks to workers, inspect their resolution,
+and use a focused follow-up only if an unresolved finding warrants it. If no
+independent reviewer is available, self-review and disclose it. Summarize delivered
+behavior, workstreams used, checks actually performed, and remaining gaps. Do not
+equate agent agreement with correctness. Commits, pushes, and PRs need user
+instruction.
