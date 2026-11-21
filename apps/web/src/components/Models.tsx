@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { Icon } from './Icon';
 import { api, ApiError } from '../api';
 import type { ModelSummary } from '../types';
@@ -31,7 +31,7 @@ export function Models({ active, refresh, currentId, busy, deleting, openError, 
       }
     } catch (error) {
       setDeleteError(error instanceof ApiError && error.status === 409
-        ? 'The stored model changed. Your current graph and all drafts are kept. Refresh models and review the stored version before deleting; the current model must be reloaded to review its new revision.'
+        ? 'The stored model changed. Your current graph and all drafts are kept. Refresh models and review the stored version before deleting; reload the current model to review its stored version.'
         : `${error instanceof Error ? error.message : 'Could not delete the model.'} Your current graph and all drafts are kept. Retry deleting when the stored file is available.`);
     } finally { deletingRef.current = false; }
   }
@@ -46,22 +46,23 @@ export function Models({ active, refresh, currentId, busy, deleting, openError, 
   }, [active, refresh, retry]);
   return <section className="models" aria-label="Stored models">
     <div className="models-actions">
-      <button className="button secondary" disabled={loading || busy} onClick={() => setRetry(value => value + 1)}>Refresh models</button>
       <button ref={newButton} className="button primary" disabled={busy} onClick={onNew}><Icon icon={Plus} /> New model</button>
+      <button className="icon-button models-refresh" title="Refresh models" aria-label="Refresh models" disabled={loading || busy} onClick={() => setRetry(value => value + 1)}><Icon icon={RotateCcw} /></button>
     </div>
     {busy && <p role="status">{deleting ? 'Deleting model…' : 'Opening model…'}</p>}
     {deleteError && <p className="model-card-error" role="alert">{deleteError}</p>}
-    {openError && <p className="model-card-error" role="alert">{openError} Use Open to retry.</p>}
+    {openError && <p className="model-card-error" role="alert">{openError} Select the model to retry.</p>}
     {loading ? <div className="state-panel" role="status"><h2>Loading models…</h2></div>
       : error ? <div className="state-panel" role="alert"><h2>Could not load models</h2><p>{error}</p><button className="button secondary" onClick={() => setRetry(value => value + 1)}>Retry loading models</button></div>
         : !models.length ? <div className="state-panel"><h2>No models yet</h2></div>
            : <ul className="models-list">{models.map(model => <li key={model.id} className="model-row" aria-current={model.id === currentId ? 'true' : undefined}>
-            <div><h3>{model.name}</h3><p>{model.id === currentId ? 'Current model · ' : ''}{model.available ? `Revision ${model.revision}` : 'Unavailable'}</p>
-              {!model.available && <p className="model-card-error">{model.error} Check the stored file, then refresh models to retry.</p>}</div>
-             <div className="model-row-actions">
-               {model.available && model.deletable && <button className="icon-button model-delete" title={`Delete ${model.name} (${model.id})`} aria-label={`Delete model ${model.name} (${model.id})${model.id === currentId ? ', current model' : ''}`} disabled={busy} onClick={() => void remove(model)}><Icon icon={Trash2} /></button>}
-               <button className="button secondary" aria-label={`Open ${model.name}`} disabled={busy || !model.available} onClick={() => onOpen(model.id)}>Open</button>
-             </div>
+            <div className="model-row-main">
+              <button type="button" className="model-row-open" data-unavailable={model.available ? undefined : 'true'} aria-label={`Open ${model.name}`} aria-describedby={!model.available ? `model-row-${model.id}-status` : undefined} disabled={busy || !model.available} onClick={() => onOpen(model.id)}>
+                <span className="model-row-name">{model.name}</span>{model.id === currentId && <span className="model-current">Current</span>}
+              </button>
+              {!model.available && <div className="model-row-unavailable" id={`model-row-${model.id}-status`}><span className="model-row-status">Unavailable</span><p className="model-row-status model-card-error">{model.error} Check the stored file, then refresh models to retry.</p></div>}
+            </div>
+            {model.available && model.deletable && <button type="button" className="icon-button model-delete" title={`Delete ${model.name} (${model.id})`} aria-label={`Delete model ${model.name} (${model.id})${model.id === currentId ? ', current model' : ''}`} disabled={busy} onClick={() => void remove(model)}><Icon icon={Trash2} /></button>}
           </li>)}</ul>}
   </section>;
 }

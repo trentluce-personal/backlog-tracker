@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { Dialog } from './Dialog';
 import { dialogControls } from './dialogFocus';
-import { ChevronDown, CircleDashed, ExternalLink, Grid2X2, Info, Link, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { ChevronDown, CircleDashed, ExternalLink, Grid2X2, Info, Link, Network, Pencil, Plus, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { Icon } from './Icon';
 import { NodeNameChip, nodeNameFormat } from './NodeNameChip';
 import { NodeProperties, hasPropertyDrafts, propertyRows } from './NodeProperties';
@@ -30,6 +30,7 @@ const HEIGHT = 600;
 const RADIUS = 48;
 const MIN_DISTANCE = 180;
 const GRID_STEP = 20;
+const MODELS_WIDTH = 380;
 const classifications: DataClassification[] = ['Transactional', 'Master Data', 'Reference Data', 'Metadata'];
 const cardinalities: RelationCardinality[] = ['0..*', '0..1', '1..*', '1..1'];
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -248,13 +249,14 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   const modelsExpand = browseButton;
   const modelsHeading = useRef<HTMLHeadingElement>(null);
   const restoreModelsFocus = useRef(false);
+  const modelsExpandIntent = useRef(false);
   const [rowWidth, setRowWidth] = useState(0);
   const [toolbarWidth, setToolbarWidth] = useState(360);
   const modelsModal = active && browserOpen && narrowDetails;
-  const panelsFit = rowWidth >= 320 + 320 + toolbarWidth + 36;
+  const panelsFit = rowWidth >= MODELS_WIDTH + 320 + toolbarWidth + 36;
   const detailsVisible = Boolean(selection) && !(browserOpen && (!panelsFit || narrowDetails));
-  const detailsResize = useDetailsResize(contentRow, active && detailsVisible, Boolean(dialog || naming || modelsModal || dragging || panning || persistence.saving));
-  const detailsWidth = browserOpen && !narrowDetails ? Math.min(detailsResize.width, Math.max(0, rowWidth - 320 - toolbarWidth - 36)) : detailsResize.width;
+  const detailsResize = useDetailsResize(contentRow, active && detailsVisible, Boolean(dialog || naming || modelsModal || dragging || panning || persistence.saving), browserOpen && !narrowDetails ? MODELS_WIDTH : 0);
+  const detailsWidth = detailsResize.width;
 
   useLayoutEffect(() => {
     const row = contentRow.current;
@@ -280,6 +282,10 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   useLayoutEffect(() => {
     const panel = modelsPanel.current;
     if (!panel) return;
+    // The outer rail is hidden by this commit, so its click intent must be
+    // captured before the effect reads activeElement.
+    const fromRail = modelsExpandIntent.current;
+    modelsExpandIntent.current = false;
     if (!active || !browserOpen) {
       panel.close();
       if (active && restoreModelsFocus.current) modelsExpand.current?.focus({ preventScroll: true });
@@ -296,7 +302,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
       modelsHeading.current?.focus({ preventScroll: true });
     } else {
       panel.show();
-      if (previous === modelsExpand.current) panel.querySelector<HTMLButtonElement>('.modeling-details-close')?.focus({ preventScroll: true });
+      if (fromRail || previous === modelsExpand.current) panel.querySelector<HTMLButtonElement>('.modeling-models-rail')?.focus({ preventScroll: true });
       else previous?.focus({ preventScroll: true });
     }
   }, [active, browserOpen, narrowDetails, dialog, naming]);
@@ -639,12 +645,6 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
   }
 
   useLayoutEffect(() => {
-    const focused = document.activeElement;
-    if (active && !dialog && !naming && !modelsModal && !narrowDetails && !restoringCanvasFocus.current && !drag.current && !pan.current && !detailsResize.gesture.current
-      && focused instanceof SVGElement && svgRef.current?.contains(focused) && focused.matches('[role="button"]:focus-visible')) revealNode(focused);
-  }, [active, dialog, naming, browserOpen, narrowDetails, selection, detailsWidth, rowWidth]);
-
-  useLayoutEffect(() => {
     const request = keyboardMove.current;
     keyboardMove.current = null;
     const scroll = scrollRef.current;
@@ -691,6 +691,15 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     if (!previous || previous.hydration !== persistence.hydration) {
       scroll.scrollLeft = canvas.originX;
       scroll.scrollTop = canvas.originY;
+      const panel = modelsPanel.current;
+      const covered = browserOpen && !narrowDetails && panel?.open
+        ? Math.max(0, panel.getBoundingClientRect().right - scroll.getBoundingClientRect().left) : 0;
+      if (covered && nodesRef.current.length) {
+        const xs = nodesRef.current.map(node => node.x);
+        const left = (Math.min(...xs) - RADIUS - 12) * displayScale;
+        const right = (Math.max(...xs) + RADIUS + 12) * displayScale;
+        scroll.scrollLeft = canvas.originX + Math.min((left + right) / 2 - (scroll.clientWidth + covered) / 2, left - covered);
+      }
       panClick.current = null;
     } else {
       scroll.scrollLeft = canvas.originX + (scroll.scrollLeft + previous.width / 2 - previous.originX) / previous.scale * displayScale - scroll.clientWidth / 2;
@@ -698,6 +707,14 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     }
     view.current = { scale: displayScale, originX: canvas.originX, originY: canvas.originY, width: scroll.clientWidth, height: scroll.clientHeight, hydration: persistence.hydration };
   }, [active, canvas, zoom, persistence.hydration]);
+
+  // After recentering: a panel or width change must not leave a keyboard-focused
+  // node hidden under a docked panel.
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (active && !dialog && !naming && !modelsModal && !narrowDetails && !restoringCanvasFocus.current && !drag.current && !pan.current && !detailsResize.gesture.current
+      && focused instanceof SVGElement && svgRef.current?.contains(focused) && focused.matches('[role="button"]:focus-visible')) revealNode(focused);
+  }, [active, dialog, naming, browserOpen, narrowDetails, selection, detailsWidth, rowWidth, canvas]);
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -1127,7 +1144,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
     <header className="workspace-header"><div className="modeling-title-group" data-no-model={persistence.id === null}><div className="modeling-title-chip"><h1 id="modeling-title" title={persistence.name || undefined}>{persistence.id === null ? 'Data Modeling' : persistence.name}</h1></div>{persistence.id !== null && <button className="modeling-title-edit" type="button" aria-label="Edit model title" disabled={!editable || persistence.saving || navigating} onClick={() => openNameDialog('title')}><Icon icon={Pencil} /></button>}</div><div className="modeling-actions">
       <button className="button secondary" disabled={!editable || navigating} onClick={() => requestAddition('node')}><Icon icon={Plus} /> Add node label</button>
       <button className="button secondary" disabled={!editable || navigating} onClick={() => requestAddition('relationship')}><Icon icon={Plus} /> Add relationship</button>
-      <button className="button secondary" disabled={!editable || persistence.id === null || (!persistence.dirty && !persistence.migrated) || persistence.saving || persistence.conflict || navigating} onClick={() => void saveCurrentModel()}>Save model</button>
+      <button className="button primary" disabled={!editable || persistence.id === null || (!persistence.dirty && !persistence.migrated) || persistence.saving || persistence.conflict || navigating} onClick={() => void saveCurrentModel()}>Save model</button>
       <ModelOperations modelId={persistence.id} model={persistence.graph} catalog={catalog.models} disabled={!editable || persistence.deleting || navigating || Boolean(dialog || naming || modelsModal)} onChange={persistence.setGraph} propertiesDrafts={propertiesDrafts} nameDrafts={nameDrafts} onPropertyRows={(id, rows) => setPropertiesDrafts(current => ({ ...current, [id]: rows }))} onNameDraft={(id, draft) => setNameDrafts(current => ({ ...current, [id]: draft }))} />
     </div></header>
     {(persistence.error || persistence.phase === 'unavailable' || persistence.failedLoadId || persistence.conflict) && <div className="modeling-persistence">
@@ -1138,10 +1155,8 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
       <div className="modeling-stage" style={{ '--modeling-canvas-height': `${canvas.availableHeight}px` } as CSSProperties}>
         <div className="modeling-stage-heading"><div className="modeling-stage-title"><h2>Graph canvas</h2><p className="modeling-status" role="status" aria-live="polite" title={[persistenceStatus, draftStatus].filter(Boolean).join(' · ')}>{[persistenceStatus, draftStatus].filter(Boolean).join(' · ')}</p></div><span>{nodes.length} nodes · {relationships.length} relationships</span><details className="modeling-help"><summary>Canvas help</summary><p tabIndex={0}>Movement snaps to the grid. Drag the thin ring to a target, then name the relationship. Drop a ring on empty canvas to name a new node, then its relationship. If that grid point is occupied, the nearest free point is used. Hold near any canvas edge to scroll while moving or connecting. Escape cancels a drag. For keyboard or manual entry, use Add relationship. Focus a node and use arrow keys to move; hold Shift for larger steps. Open Relationship bundles at the bottom of the canvas to list bundled types.</p></details></div>
         {groups.some(group => !group.geometry && !group.separate.length) && <p className="modeling-route-warning" role="status">Some arrows have no clear route within the bounded routing search. Move nodes closer or apart to help show them; affected relationships are listed below.</p>}
-        <div ref={contentRow} className="modeling-content-row" data-models-open={browserOpen} data-details-open={detailsVisible} style={{ '--modeling-details-width': `${detailsWidth}px`, '--modeling-models-width': '320px' } as CSSProperties}>
-        <div className="modeling-models-rail" hidden={browserOpen}>
-          <button ref={modelsExpand} type="button" className="modeling-models-expand modeling-details-close" title="Expand models" aria-label="Expand models" aria-expanded={browserOpen} aria-controls="canvas-models-panel" disabled={Boolean(dialog || naming || navigating || persistence.saving || persistence.creating || persistence.deleting || persistence.phase === 'loading')} onClick={() => { if (canNavigate()) onBrowse(); }}><Icon icon={PanelLeftOpen} /></button>
-        </div>
+        <div ref={contentRow} className="modeling-content-row" data-models-open={browserOpen} data-details-open={detailsVisible} style={{ '--modeling-details-width': `${detailsWidth}px`, '--modeling-models-width': `${MODELS_WIDTH}px` } as CSSProperties}>
+        <button ref={modelsExpand} type="button" className="modeling-models-rail" hidden={browserOpen} title="Expand models" aria-label="Expand models" aria-expanded={browserOpen} aria-controls="canvas-models-panel" disabled={Boolean(dialog || naming || navigating || persistence.saving || persistence.creating || persistence.deleting || persistence.phase === 'loading')} onClick={() => { if (canNavigate()) { modelsExpandIntent.current = true; onBrowse(); } }}><Icon icon={Network} /><span>Models</span></button>
         <div ref={regionRef} className="modeling-canvas-region">
           {!nodes.length && <div className="modeling-empty"><Icon icon={CircleDashed} /><strong>{editable ? 'No node labels' : 'Model unavailable'}</strong></div>}
         <div ref={scrollRef} inert={persistence.deleting || persistence.creating || persistence.phase === 'loading'} className={`modeling-canvas-scroll${panning ? ' modeling-panning' : ''}`} tabIndex={0} aria-label="Graph canvas, drag empty canvas or scroll to pan" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={finishPan} onPointerCancel={event => { if (pan.current?.pointerId === event.pointerId) cancelPan(); }} onLostPointerCapture={event => { if (event.target === event.currentTarget && pan.current?.pointerId === event.pointerId) cancelPan(); }} onClick={event => {
@@ -1214,7 +1229,7 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
           <output aria-label="Canvas zoom" aria-live="polite">{Math.round(zoom * 100)}%</output>
           <button type="button" aria-label="Zoom in" title="Zoom in" disabled={navigating || zoom >= 2} onClick={() => changeZoom(zoom + .25)}><Icon icon={ZoomIn} /></button>
           <button type="button" aria-label="Reset zoom" title="Reset zoom to 100%" disabled={navigating || zoom === 1} onClick={() => changeZoom(1)}><Icon icon={RotateCcw} /></button>
-          <button type="button" className="modeling-grid-toggle" aria-pressed={showGrid} disabled={navigating} onClick={() => { if (canNavigate()) setShowGrid(current => !current); }}><Icon icon={Grid2X2} />{showGrid ? 'Hide grid' : 'Show grid'}</button>
+          <button type="button" className="modeling-grid-toggle" aria-label={showGrid ? 'Hide grid' : 'Show grid'} title={showGrid ? 'Hide grid' : 'Show grid'} aria-pressed={showGrid} disabled={navigating} onClick={() => { if (canNavigate()) setShowGrid(current => !current); }}><Icon icon={Grid2X2} /><span>{showGrid ? 'Hide grid' : 'Show grid'}</span></button>
           <button ref={legendButton} type="button" aria-label="Canvas legend" title="Canvas legend" aria-expanded={legendOpen} aria-controls="canvas-classification-legend" disabled={navigating} onClick={() => setLegendOpen(current => !current)}><Icon icon={Info} /></button>
         </div>
         </div>
@@ -1229,8 +1244,11 @@ export function DataModeling({ active, browserOpen, browseButton, onBrowse, dial
         if (event.shiftKey && (document.activeElement === first || document.activeElement === modelsHeading.current)) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }}>
-        <header className="modeling-details-header"><h2 ref={modelsHeading} id="canvas-models-title" tabIndex={-1}>All Models</h2><button type="button" className="modeling-details-close" title="Collapse models" aria-label="Collapse models" aria-expanded={browserOpen} aria-controls="canvas-models-panel" disabled={Boolean(dialog || naming || persistence.saving || persistence.creating || persistence.deleting || persistence.phase === 'loading')} onClick={collapseModels}><Icon icon={PanelLeftClose} /></button></header>
-        <div className="modeling-models-content">{children}</div>
+        <div className="modeling-models-body">
+          <header className="modeling-details-header"><h2 ref={modelsHeading} id="canvas-models-title" tabIndex={-1}>Models</h2></header>
+          <div className="modeling-models-content">{children}</div>
+        </div>
+        <button type="button" className="modeling-models-rail" title="Collapse models" aria-label="Collapse models" aria-expanded={browserOpen} aria-controls="canvas-models-panel" disabled={Boolean(dialog || naming || navigating || persistence.saving || persistence.creating || persistence.deleting || persistence.phase === 'loading')} onClick={collapseModels}><Icon icon={Network} /><span>Models</span></button>
       </dialog>
       {selection && <dialog ref={detailsRef} inert={persistence.deleting || persistence.creating || persistence.phase === 'loading'} className="modeling-details" role={narrowDetails ? 'dialog' : 'region'} aria-modal={narrowDetails ? true : undefined} aria-labelledby="modeling-details-title" onPointerDown={event => {
         backdropGesture.current = narrowDetails && !dialog && event.button === 0 && event.isPrimary && outsideDetails(event)

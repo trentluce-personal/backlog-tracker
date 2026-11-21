@@ -1,9 +1,9 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { ModelInput, ModelRelationshipType, ReferenceCatalogModel } from '../types';
 import { NodeNameChip, type NodeNameDraft } from './NodeNameChip';
 import { NodeProperties, propertyRows, type PropertyRow } from './NodeProperties';
 import { PropertyIndexes } from './PropertyIndexes';
-import { identifierError, propertySchema } from './schemaObjects';
+import { identifierError, malformedUnicode, propertySchema } from './schemaObjects';
 import { renamePropertySchema, resolveTypeOwner } from './modelEditing';
 
 export function RelationshipTypeName({ type, model, onChange, draft, onDraft, disabled = false, heading = false }: {
@@ -29,13 +29,19 @@ export function RelationshipTypeDetails({ type, model, modelId, catalog, onChang
   nameInHeader?: boolean;
 }) {
   const { owner, definition, target } = resolveTypeOwner(type, model, modelId, catalog);
+  const [displayNameError, setDisplayNameError] = useState('');
   const initialRows = useMemo(() => propertyRows(type.kind === 'definition' ? type.properties : []), [type]);
   const update = (changes: object) => onChange({ ...model, relationshipTypes: model.relationshipTypes.map(item => item.id === type.id ? { ...item, ...changes } : item) });
   return <section className="schema-panel" aria-label="Relationship type">
     {type.kind === 'definition' ? <>
       {!nameInHeader && <RelationshipTypeName type={type} model={model} onChange={onChange} draft={draft} onDraft={onDraft} />}
       <label className="schema-checkbox modeling-draft-control"><input type="checkbox" checked={type.draft} onChange={event => update({ draft: event.target.checked })} />Draft</label>
-      <label htmlFor="type-display-name">Display name</label><input id="type-display-name" value={type.displayName ?? ''} maxLength={200} onChange={event => { if ([...event.target.value].length <= 100 && !/\p{Cc}/u.test(event.target.value)) update({ displayName: event.target.value || undefined }); }} />
+      <label htmlFor="type-display-name">Display name</label><input id="type-display-name" value={type.displayName ?? ''} aria-invalid={Boolean(displayNameError) || undefined} aria-describedby={displayNameError ? 'type-display-name-error' : undefined} onChange={event => {
+        const value = event.target.value;
+        if ([...value].length > 100 || /\p{Cc}/u.test(value) || malformedUnicode(value)) { setDisplayNameError('Use at most 100 characters without control characters.'); return; }
+        setDisplayNameError(''); update({ displayName: value || undefined });
+      }} />
+      {displayNameError && <p className="modeling-error" id="type-display-name-error" role="alert">{displayNameError}</p>}
       {(['sourceLabel', 'targetLabel'] as const).map(field => <label key={field}>{field === 'sourceLabel' ? 'Source label rule' : 'Target label rule'}<input value={type[field] ?? ''} onChange={event => update({ [field]: event.target.value || null })} /></label>)}
       <NodeProperties model={model} rows={rows ?? initialRows} disabled={false} target={target} constraints={model.constraints} indexes={model.indexes} onRows={onRows} onCommit={(properties, rename) => {
         const next = rename ? renamePropertySchema(model, target, rename.oldName, rename.newName) : model;

@@ -29,6 +29,15 @@ export function prepareThemeReveal(button: HTMLButtonElement, from: 'light' | 'd
   overlay.style.setProperty('--theme-x', `${x}px`);
   overlay.style.setProperty('--theme-y', `${y}px`);
   const copy = source.cloneNode(true) as HTMLElement;
+  const anchored: { live: HTMLElement; clone: HTMLElement }[] = [];
+  if (scrollX || scrollY) {
+    const liveNodes = source.querySelectorAll<HTMLElement>('*');
+    const copyNodes = copy.querySelectorAll<HTMLElement>('*');
+    liveNodes.forEach((node, index) => {
+      const position = getComputedStyle(node).position;
+      if (position === 'sticky' || position === 'fixed') anchored.push({ live: node, clone: copyNodes[index] });
+    });
+  }
   copy.removeAttribute('id');
   copy.querySelectorAll('[id]').forEach(node => node.removeAttribute('id'));
   copy.querySelectorAll('.interaction-ripple').forEach(node => node.remove());
@@ -65,6 +74,17 @@ export function prepareThemeReveal(button: HTMLButtonElement, from: 'light' | 'd
   };
   try {
     document.body.append(stage);
+    for (const { live, clone } of anchored) {
+      const target = live.getBoundingClientRect();
+      const current = clone.getBoundingClientRect();
+      const dx = target.left - current.left;
+      const dy = target.top - current.top;
+      if (dx || dy) {
+        const margins = getComputedStyle(clone);
+        clone.style.marginLeft = `${parseFloat(margins.marginLeft) + dx}px`;
+        clone.style.marginTop = `${parseFloat(margins.marginTop) + dy}px`;
+      }
+    }
     // Carry even the broad penumbra/bloom past the far corner before removal.
     const frames = [
       { '--theme-reveal-radius': '0px' },

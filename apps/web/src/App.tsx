@@ -23,6 +23,7 @@ export function App() {
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
+  const [countAnnouncement, setCountAnnouncement] = useState('');
   const [workspace, setWorkspace] = useState<'backlog' | 'data-modeling' | 'erd'>('backlog');
   const [navigationCollapsed, setNavigationCollapsed] = useState(false);
   const modelPersistence = useModelPersistence();
@@ -30,7 +31,7 @@ export function App() {
   const erNavigation = useRef<ErNavigation | null>(null);
   const [erBlocked, setErBlocked] = useState(false);
   const [modelsRefresh, setModelsRefresh] = useState(0);
-  const [modelsOpen, setModelsOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(true);
   const modelsTrigger = useRef<HTMLButtonElement>(null);
   const [modelDialog, setModelDialog] = useState<'node' | 'relationship' | null>(null);
   const [projectId, setProjectId] = useState('all');
@@ -76,7 +77,17 @@ export function App() {
   }, [tasks, projects, projectId, status, priority, search]);
   const scopedTasks = tasks.filter(task => projectId === 'all' || task.projectId === projectId);
   const complete = scopedTasks.filter(task => task.status === 'done').length;
+  useEffect(() => {
+    if (loading || loadError || workspace !== 'backlog') { setCountAnnouncement(''); return; }
+    const timeout = window.setTimeout(() => {
+      setCountAnnouncement(filtered && visibleTasks.length === 0
+        ? 'No tasks match these filters.'
+        : `${visibleTasks.length} ${visibleTasks.length === 1 ? 'task' : 'tasks'} ${filtered ? 'matching filters' : 'in view'}`);
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [visibleTasks.length, filtered, loading, loadError, workspace]);
   function clearFilters() { setSearch(''); setStatus('all'); setPriority('all'); }
+  const navBusy = Boolean(editor || deletion || modelDialog) || erBlocked || modelPersistence.saving || modelPersistence.creating || modelPersistence.deleting || modelPersistence.phase === 'loading';
   function navigateWorkspace(next: typeof workspace) {
     if (!editor && !deletion && !modelDialog && modelNavigation.current?.canNavigate() && erNavigation.current?.canNavigate()) setWorkspace(next);
   }
@@ -135,21 +146,21 @@ export function App() {
         <div className="brand"><img className="brand-mark" src="/forge-logo.svg" alt="" /><div className="brand-wordmark"><span>The</span> Forge</div></div>
         <AppearanceControls />
         <nav className="project-nav" aria-label="General navigation">
-          <div className="sidebar-section-heading"><h2>General</h2></div>
+          <div className="sidebar-section-heading"><span>General</span></div>
           <ul className="workspace-nav-list">
-            <li><button className={`nav-item ${workspace === 'backlog' ? 'active' : ''}`} aria-label="Backlog" title="Backlog" aria-current={workspace === 'backlog' ? 'page' : undefined} onClick={() => navigateWorkspace('backlog')}><Icon icon={LayoutDashboard} /><span>Backlog</span><span className="nav-count">{tasks.length}</span></button></li>
+            <li><button className={`nav-item ${workspace === 'backlog' ? 'active' : ''}`} aria-label="Backlog" title="Backlog" aria-current={workspace === 'backlog' ? 'true' : undefined} disabled={navBusy} onClick={() => navigateWorkspace('backlog')}><Icon icon={LayoutDashboard} /><span>Backlog</span><span className="nav-count">{tasks.length}</span></button></li>
             <li>
-              <button className="nav-item" aria-label="Data Modeling" title="Data Modeling" onClick={() => navigateWorkspace('data-modeling')}><Icon icon={Network} /><span>Data Modeling</span></button>
+              <button className="nav-item" aria-label="Data Modeling" title="Data Modeling" disabled={navBusy} onClick={() => navigateWorkspace('data-modeling')}><Icon icon={Network} /><span>Data Modeling</span></button>
               <ul className="workspace-nav-list workspace-nav-children">
-                <li><button className={`nav-item ${workspace === 'data-modeling' ? 'active' : ''}`} aria-label="Graph" title="Graph" aria-current={workspace === 'data-modeling' ? 'page' : undefined} onClick={() => navigateWorkspace('data-modeling')}><Icon icon={GitFork} /><span>Graph</span></button></li>
-                <li><button className={`nav-item ${workspace === 'erd' ? 'active' : ''}`} aria-label="ERD" title="ERD" aria-current={workspace === 'erd' ? 'page' : undefined} onClick={() => navigateWorkspace('erd')}><Icon icon={Table2} /><span>ERD</span></button></li>
+                <li><button className={`nav-item ${workspace === 'data-modeling' ? 'active' : ''}`} aria-label="Graph" title="Graph" aria-current={workspace === 'data-modeling' ? 'true' : undefined} disabled={navBusy} onClick={() => navigateWorkspace('data-modeling')}><Icon icon={GitFork} /><span>Graph</span></button></li>
+                <li><button className={`nav-item ${workspace === 'erd' ? 'active' : ''}`} aria-label="ERD" title="ERD" aria-current={workspace === 'erd' ? 'true' : undefined} disabled={navBusy} onClick={() => navigateWorkspace('erd')}><Icon icon={Table2} /><span>ERD</span></button></li>
               </ul>
             </li>
           </ul>
         </nav>
-        <button className="icon-button navigation-toggle" aria-label={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!navigationCollapsed} aria-controls="workspace-navigation" disabled={Boolean(editor || deletion || modelDialog) || erBlocked || modelPersistence.saving || modelPersistence.creating || modelPersistence.deleting || modelPersistence.phase === 'loading'} onClick={() => { if (modelNavigation.current?.canNavigate() && erNavigation.current?.canNavigate()) setNavigationCollapsed(value => !value); }}><Icon icon={navigationCollapsed ? PanelLeftOpen : PanelLeftClose} /></button>
+        <button className="icon-button navigation-toggle" aria-label={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!navigationCollapsed} aria-controls="workspace-navigation" disabled={navBusy} onClick={() => { if (modelNavigation.current?.canNavigate() && erNavigation.current?.canNavigate()) setNavigationCollapsed(value => !value); }}><Icon icon={navigationCollapsed ? PanelLeftOpen : PanelLeftClose} /></button>
       </aside>
-      <main id="main" className={`workspace${workspace !== 'backlog' ? ' workspace-modeling' : ''}`}>
+      <main id="main" tabIndex={-1} className={`workspace${workspace !== 'backlog' ? ' workspace-modeling' : ''}`}>
         <div hidden={workspace !== 'backlog'}>
         <header className="workspace-header"><div><p className="eyebrow">A LITTLE CLARITY, EVERY DAY</p><h1 id="workspace-title" tabIndex={-1}>{selectedProject?.name ?? 'Backlog'}</h1><p className="workspace-subtitle">{selectedProject ? 'Your ideas, next steps, and small wins. All in one place.' : 'Big ideas. Small steps. A little more room to focus.'}</p></div><button className="button primary new-task" disabled={loading || Boolean(loadError)} onClick={() => openEditor(projects.length ? { kind: 'task' } : { kind: 'project' })}><Icon icon={Plus} /> {projects.length ? 'New task' : 'Create project'}</button></header>
         <div className="workspace-summary"><span><strong>{scopedTasks.filter(task => task.status !== 'done').length}</strong> open tasks</span><span className="summary-divider" /><span><strong>{complete}</strong> completed</span><div className="progress-track" role="progressbar" aria-label="Tasks completed" aria-valuenow={complete} aria-valuemin={0} aria-valuemax={scopedTasks.length || 1}><span style={{ width: `${scopedTasks.length ? complete / scopedTasks.length * 100 : 0}%` }} /></div></div>
@@ -159,11 +170,12 @@ export function App() {
           <div className="filter-field"><label htmlFor="status-filter">Status</label><select id="status-filter" value={status} onChange={event => setStatus(event.target.value as Status | 'all')}><option value="all">All statuses</option>{statuses.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div>
           <div className="filter-field"><label htmlFor="priority-filter">Priority</label><select id="priority-filter" value={priority} onChange={event => setPriority(event.target.value as Priority | 'all')}><option value="all">All priorities</option>{priorities.map(item => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select></div>
         </section>
-        <div className="project-actions" aria-label="Project management">
+        <div className="project-actions" role="group" aria-label="Project management">
           <button className="text-button" disabled={loading || Boolean(loadError)} onClick={() => openEditor({ kind: 'project' })}><Icon icon={Plus} /> New project</button>
           {selectedProject && <button className="text-button" aria-label={`Edit project: ${selectedProject.name}`} disabled={loading || Boolean(loadError)} onClick={() => openEditor({ kind: 'project', project: selectedProject })}>Edit selected project</button>}
         </div>
         <div className="board-meta"><span>{loading ? 'Your workspace' : `${visibleTasks.length} ${visibleTasks.length === 1 ? 'task' : 'tasks'}${filtered ? ' matching filters' : ' in view'}`}</span>{filtered && <button className="text-button" onClick={clearFilters}>Clear filters</button>}<span className="view-label"><Icon icon={Columns3} /> Board view</span></div>
+        <div className="sr-only" role="status">{countAnnouncement}</div>
         <div className="announcement" role="status">{notice}</div>
         {actionError && <div className="error-banner" role="alert"><p>{actionError} Your task hasn’t changed. Select a status to retry.</p><button className="text-button" onClick={() => setActionError('')}>Dismiss</button></div>}
         {loading ? <div className="state-panel" role="status"><span className="state-symbol" aria-hidden="true"><Icon icon={LoaderCircle} /></span><h2>Opening your workspace</h2><p>Gathering your projects and next steps…</p></div>

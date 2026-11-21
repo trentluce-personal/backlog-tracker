@@ -8,9 +8,17 @@ export function ErInlineEditor({ model, tableId, initial, busy, onChange, onComm
   const input = useRef<HTMLInputElement>(null);
   const [errors, setErrors] = useState<string[]>([]);
   useLayoutEffect(() => { input.current?.focus(); input.current?.select(); }, []);
+  // Closing drops the whole multi-field draft, so confirm only when it diverges
+  // from the stored column; an untouched editor still dismisses directly.
+  const stored = model.tables.find(table => table.id === tableId)?.columns.find(column => column.id === initial.column.id);
+  const changed = Boolean(stored) && JSON.stringify(stored) !== JSON.stringify(initial.column);
+  function requestClose() {
+    if (!busy && changed && !window.confirm('Discard your unsaved column changes?')) return;
+    onClose();
+  }
   return <form className="erd-inline-editor" aria-label="Edit column" onPointerDown={event => event.stopPropagation()} onKeyDown={event => {
     event.stopPropagation();
-    if (event.key === 'Escape' && !busy) { event.preventDefault(); onClose(); }
+    if (event.key === 'Escape' && !busy) { event.preventDefault(); requestClose(); }
   }} onSubmit={event => {
     event.preventDefault();
     const result = applyDraft(model, tableId, initial);
@@ -23,6 +31,6 @@ export function ErInlineEditor({ model, tableId, initial, busy, onChange, onComm
       <label htmlFor={`${id}-type`}>PostgreSQL type</label><select id={`${id}-type`} disabled={busy} value={initial.column.dataType} onChange={event => onChange({ ...initial, column: { ...initial.column, dataType: event.target.value as typeof initial.column.dataType } })}>{erDataTypes.map(type => <option key={type}>{type}</option>)}</select>
       <div className="erd-flags">{(['primaryKey', 'unique', 'nullable'] as const).map(flag => <label key={flag}><input type="checkbox" disabled={busy || (flag === 'nullable' && initial.column.primaryKey)} checked={initial.column[flag]} onChange={event => onChange({ ...initial, column: { ...initial.column, [flag]: event.target.checked, ...(flag === 'primaryKey' && event.target.checked ? { nullable: false } : {}) } })} />{flag === 'primaryKey' ? 'Primary key' : flag === 'unique' ? 'Unique' : 'Nullable'}</label>)}</div>
     {errors.length > 0 && <div id={`${id}-errors`} className="form-error" role="alert">{errors.map(error => <p key={error}>{error}</p>)}</div>}
-    <div className="erd-form-actions"><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" disabled={busy}>Apply</button></div>
+    <div className="erd-form-actions"><button type="button" disabled={busy} onClick={requestClose}>Cancel</button><button type="submit" disabled={busy}>Apply</button></div>
   </form>;
 }

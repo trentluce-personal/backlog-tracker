@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent,
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
-export function useDetailsResize(row: RefObject<HTMLDivElement | null>, enabled: boolean, blocked: boolean) {
+export function useDetailsResize(row: RefObject<HTMLDivElement | null>, enabled: boolean, blocked: boolean, reserved = 0) {
   // A preference belongs to this mounted workspace, never to the saved graph.
   const [preferred, setPreferred] = useState<number | null>(null);
   const [bounds, setBounds] = useState({ min: 320, max: 800, fallback: 340 });
@@ -33,9 +33,23 @@ export function useDetailsResize(row: RefObject<HTMLDivElement | null>, enabled:
     if (!element) return;
     const measure = () => {
       const mobile = window.innerWidth <= 800;
-      const available = mobile ? document.documentElement.clientWidth : element.clientWidth;
+      // Docked siblings overlay the row; reserve their width so the canvas keeps
+      // its exposed toolbar minimum while dragging or keyboard-resizing.
+      const available = mobile ? document.documentElement.clientWidth : Math.max(0, element.clientWidth - reserved);
       const toolbar = element.querySelector<HTMLElement>('.modeling-canvas-controls');
-      const exposed = Math.max(240, (toolbar?.getBoundingClientRect().width ?? 0) + 24);
+      // Sum the non-shrinking children: the toolbar's own box can already be
+      // wrapped by the current details width, which would feed back into it.
+      let toolbarWidth = 0;
+      if (toolbar) {
+        const style = getComputedStyle(toolbar);
+        const kids = Array.from(toolbar.children);
+        toolbarWidth = kids.reduce((sum, kid) => sum + kid.getBoundingClientRect().width, 0)
+          + (parseFloat(style.columnGap) || 0) * Math.max(0, kids.length - 1)
+          + (parseFloat(style.paddingLeft) || 0) * 2 + (parseFloat(style.borderLeftWidth) || 0) * 2;
+      }
+      // Collapsed, the tools sit beside the 56px rail (68px + 12px margin);
+      // docked models already reserve their own width, leaving 12px + 12px.
+      const exposed = Math.max(240, toolbarWidth + (reserved ? 24 : 80));
       const max = mobile ? available : Math.min(800, Math.max(0, available - exposed));
       const next = { min: Math.min(mobile ? available < 320 ? available : 280 : 320, max), max, fallback: available * 2 / 5 };
       setBounds(current => current.min === next.min && current.max === next.max && current.fallback === next.fallback ? current : next);
@@ -48,7 +62,7 @@ export function useDetailsResize(row: RefObject<HTMLDivElement | null>, enabled:
     if (toolbar) observer.observe(toolbar);
     window.addEventListener('resize', viewportChanged);
     return () => { observer.disconnect(); window.removeEventListener('resize', viewportChanged); };
-  }, [row]);
+  }, [row, reserved]);
 
   useLayoutEffect(() => {
     if (!enabled || blocked) finish(true);

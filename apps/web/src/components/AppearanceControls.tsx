@@ -54,7 +54,7 @@ export function AppearanceControls() {
     savePreference('backlog-motion', next);
   }
 
-  return <div className="appearance-controls" aria-label="Appearance">
+  return <div className="appearance-controls" role="group" aria-label="Appearance">
     <button type="button" className="text-button motion-toggle" aria-pressed={motion === 'full'}
       aria-label={motion === 'full' ? 'Motion on — reduce motion' : 'Enable animations'} title={motion === 'full' ? 'Motion on — reduce motion' : 'Enable animations'} onClick={toggleMotion}>
       <Icon icon={motion === 'full' ? Pause : Play} /><span>{motion === 'full' ? 'Motion on' : 'Enable animations'}</span>
