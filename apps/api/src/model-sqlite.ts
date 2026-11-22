@@ -21,6 +21,7 @@ const documentTable = (name: string) => `CREATE TABLE ${name} (
 const markerTable = (version: 1 | 2) => `CREATE TABLE ${marker} (
   version INTEGER PRIMARY KEY CHECK (version = ${version})
 ) STRICT`;
+export const sqliteSidecarSuffixes = ['-wal', '-shm', '-journal'] as const;
 
 export function checkModelDatabaseFiles(path: string, offline = false): string | undefined {
   // Inspect the entries themselves, never the targets of file symlinks.
@@ -29,7 +30,7 @@ export function checkModelDatabaseFiles(path: string, offline = false): string |
   const broadMode = (mode: number) => process.platform !== 'win32' && (mode & 0o077) !== 0;
   const permissionsError = 'The SQLite database and its sidecars must have owner-only POSIX permissions (for example, mode 0600).';
   if (broadMode(database.mode)) return permissionsError;
-  for (const suffix of ['-wal', '-shm', '-journal']) {
+  for (const suffix of sqliteSidecarSuffixes) {
     const sidecar = lstatSync(path + suffix, { throwIfNoEntry: false });
     if (!sidecar) continue;
     if (!sidecar.isFile()) return 'SQLite sidecars must be regular files.';
@@ -42,7 +43,7 @@ export function checkModelDatabaseFiles(path: string, offline = false): string |
 
 export function openExistingDatabase(path: string, mode: 'read-only' | 'read-write') {
   const url = pathToFileURL(path);
-  // Preview is offline: immutable mode cannot create or change WAL sidecars.
+  // Immutable mode cannot create or change sidecars, but also ignores WAL.
   url.search = mode === 'read-only' ? '?mode=ro&immutable=1' : '?mode=rw';
   return new DatabaseSync(url, { readOnly: mode === 'read-only' });
 }
@@ -105,10 +106,18 @@ function isBacklogDatabase(db: DatabaseSync) {
   }
 }
 
+function passesIntegrityCheck(db: DatabaseSync) {
+  try { return db.prepare('PRAGMA integrity_check(1)').get()?.integrity_check === 'ok'; }
+  catch { return false; }
+}
+
 export function checkImportDestination(db: DatabaseSync): ImportSource {
   if (!isBacklogDatabase(db)) throw new ImportDestinationError('Import requires an existing backlog database with a supported version and matching schema.');
   if (db.prepare('PRAGMA encoding').get()?.encoding !== 'UTF-8') {
     throw new ImportDestinationError('Import requires a UTF-8 SQLite database to preserve the original JSON bytes.');
+  }
+  if (!passesIntegrityCheck(db)) {
+    throw new ImportDestinationError('SQLite integrity check failed. Restore a valid backup before importing.');
   }
   const schema = modelSchema(db);
   if (!schema.length) return 'files';
@@ -144,13 +153,22 @@ export function importModelDocuments(db: DatabaseSync, source: ImportSource, bat
   });
 }
 
-export function openModelDocuments(db: DatabaseSync) {
+export function sqliteModelNotReady() {
+  return new Error('SQLite model storage is not ready. Run the offline all-model importer (model-import.js --dry-run, then --apply) or restore a valid v2 backup if the schema is damaged.');
+}
+
+export function checkSqliteModelStartup(db: DatabaseSync, checkIntegrity = true) {
   try {
-    if (!isBacklogDatabase(db) || !hasCutover(db, modelSchema(db), 2)) throw new Error();
-    return { graphs: { named: openDocuments(db, namedTable), legacy: openDocuments(db, legacyTable) }, erds: openDocuments(db, erdTable) };
+    if (!isBacklogDatabase(db) || !hasCutover(db, modelSchema(db), 2) ||
+        (checkIntegrity && !passesIntegrityCheck(db))) throw new Error();
   } catch {
-    throw new Error('SQLite model storage is not ready. Run the offline all-model importer (model-import.js --dry-run, then --apply) or restore a valid v2 backup if the schema is damaged.');
+    throw sqliteModelNotReady();
   }
+}
+
+export function openModelDocuments(db: DatabaseSync) {
+  checkSqliteModelStartup(db, false); // Recheck the mode against the live connection.
+  return { graphs: { named: openDocuments(db, namedTable), legacy: openDocuments(db, legacyTable) }, erds: openDocuments(db, erdTable) };
 }
 
 function openDocuments(db: DatabaseSync, table: string) {

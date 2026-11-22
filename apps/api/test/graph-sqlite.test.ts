@@ -223,6 +223,51 @@ test('consistent backlog v1 can cut over and migrate dueTime on startup', async 
   assert.equal(readVersion(), 2);
 });
 
+test('unused index corruption blocks import preflight and the write transaction without changing bytes', async t => {
+  const f = await fixture(t);
+  const source = Buffer.from(JSON.stringify({ ...emptyModel(), revision: 1 }));
+  await writeFile(f.modelPath, source);
+  let offset: number;
+  {
+    using db = new DatabaseSync(f.dbPath);
+    const page = Number(db.prepare("SELECT rootpage FROM sqlite_schema WHERE name = 'tasks_projectId'").get()?.rootpage);
+    offset = (page - 1) * Number(db.prepare('PRAGMA page_size').get()?.page_size);
+    // Keep the fixture in rollback mode for the direct write-transaction check.
+    db.exec('PRAGMA journal_mode = DELETE');
+  }
+  const corrupted = await readFile(f.dbPath);
+  assert.equal(corrupted[offset], 10); // Empty SQLite index b-tree leaf page.
+  corrupted[offset] = 0;
+  await writeFile(f.dbPath, corrupted);
+  const entries = (await readdir(f.directory)).sort();
+  async function unchanged() {
+    assert.ok((await readFile(f.dbPath)).equals(corrupted), 'database bytes changed');
+    assert.ok((await readFile(f.modelPath)).equals(source), 'source bytes changed');
+    assert.deepEqual((await readdir(f.directory)).sort(), entries);
+    assert.deepEqual(f.ready('offline'), []);
+  }
+  for (const action of ['--dry-run', '--apply'] as const) {
+    await t.test(action, async () => {
+      const refused = f.run(action);
+      await unchanged();
+      assert.equal(refused.status, 1, refused.stderr);
+      assert.match(refused.stderr, /integrity check failed/);
+      assert.equal(refused.report, undefined);
+    });
+  }
+  await t.test('write transaction bypassing CLI preflight', async () => {
+    const path = join(f.directory, 'transaction.sqlite');
+    await writeFile(path, corrupted, { mode: 0o600 });
+    {
+      using db = new DatabaseSync(path);
+      assert.throws(() => importModelDocuments(db, 'files', { named: [], erds: [] }), /integrity check failed/);
+      assert.equal(db.isTransaction, false);
+    }
+    assert.ok((await readFile(path)).equals(corrupted), 'database bytes changed');
+    assert.deepEqual((await readdir(f.directory)).sort(), [...entries, 'transaction.sqlite'].sort());
+  });
+});
+
 test('offline preflight refuses pending journals and nonregular sidecars without modifying them', async t => {
   const f = await fixture(t);
   const before = await readFile(f.dbPath);

@@ -1,9 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { HttpError, type TaskInput } from './validation.ts';
-import { checkModelDatabaseFiles, openExistingDatabase, openModelDocuments, refuseFileModeAfterCutover, type ModelDocuments } from './model-sqlite.ts';
+import { checkModelDatabaseFiles, checkSqliteModelStartup, importModelDocuments, openExistingDatabase, openModelDocuments, refuseFileModeAfterCutover, sqliteModelNotReady, type ModelDocuments } from './model-sqlite.ts';
+import { bootstrapSqlite } from './sqlite-bootstrap.ts';
+import { checkSqliteStartup } from './sqlite-startup-check.ts';
 
 export interface Project { id: string; name: string; createdAt: string }
 export interface Task extends TaskInput { id: string; createdAt: string; updatedAt: string }
@@ -24,16 +26,9 @@ export interface BackendSchemaResponse {
   jsonStorage: { name: string; schemaVersion: number; fields: string[]; collections: { name: string; fields: string[] }[] }[];
 }
 
-export function openStore(path: string, sqliteModels = false) {
-  if (!sqliteModels && path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const db = sqliteModels ? openEnabledDatabase(path) : new DatabaseSync(path);
-  let modelDocuments: ModelDocuments | undefined;
+function migrateBacklog(db: DatabaseSync) {
+  db.exec('BEGIN IMMEDIATE');
   try {
-    db.exec('PRAGMA busy_timeout = 5000;');
-    if (sqliteModels) modelDocuments = openModelDocuments(db);
-    else refuseFileModeAfterCutover(db);
-    db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-    db.exec('BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
     if (version !== 0 && version !== 1 && version !== 2) throw new Error('Unsupported database schema version.');
     if (version === 0) db.exec(`
@@ -66,8 +61,24 @@ export function openStore(path: string, sqliteModels = false) {
     `);
     db.exec('COMMIT');
   } catch (error) {
-    try { if (db.isTransaction) db.exec('ROLLBACK'); }
-    finally { db.close(); }
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function openStore(path: string, sqliteModels = false) {
+  const db = sqliteModels ? openEnabledDatabase(path) : openFileModeDatabase(path);
+  let modelDocuments: ModelDocuments | undefined;
+  try {
+    db.exec('PRAGMA busy_timeout = 5000;');
+    if (sqliteModels) modelDocuments = openModelDocuments(db);
+    else refuseFileModeAfterCutover(db);
+    db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
+    // A v2 backlog needs no write transaction. The older backlog version is
+    // independent of the model marker and can still be upgraded as before.
+    if (!sqliteModels || db.prepare('PRAGMA user_version').get()?.user_version !== 2) migrateBacklog(db);
+  } catch (error) {
+    db.close();
     throw error;
   }
 
@@ -171,8 +182,26 @@ export function openStore(path: string, sqliteModels = false) {
 }
 
 function openEnabledDatabase(path: string) {
+  if (path === ':memory:' || !path) throw new Error('SQLite model storage requires a regular SQLite file.');
+  bootstrapSqlite(path, db => {
+    migrateBacklog(db);
+    importModelDocuments(db, 'files', { named: [], erds: [] });
+  });
   const problem = checkModelDatabaseFiles(path);
   if (problem) throw new Error(problem);
-  try { return openExistingDatabase(path, 'read-write'); }
-  catch { throw new Error('Unable to open the existing backlog database for SQLite model storage.'); }
+  try {
+    if (!checkSqliteStartup(path, checkSqliteModelStartup)) throw sqliteModelNotReady();
+    return openExistingDatabase(path, 'read-write');
+  }
+  catch { throw sqliteModelNotReady(); }
+}
+
+function openFileModeDatabase(path: string) {
+  if (path === ':memory:' || !path) return new DatabaseSync(path);
+  let target = path;
+  try { target = realpathSync(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  if (checkSqliteStartup(target, refuseFileModeAfterCutover)) return openExistingDatabase(target, 'read-write');
+  mkdirSync(dirname(path), { recursive: true });
+  return new DatabaseSync(path);
 }

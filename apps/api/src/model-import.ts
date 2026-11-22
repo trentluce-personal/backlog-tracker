@@ -86,7 +86,10 @@ async function main() {
       checkFiles(db);
       const connection = openExistingDatabase(db, 'read-write');
       try { importModelDocuments(connection, source, batch); }
-      catch { throw new ImportError('Import transaction failed. Check database availability, permissions and whether the destination changed.'); }
+      catch (error) {
+        if (error instanceof ImportDestinationError) throw new ImportError(error.message);
+        throw new ImportError('Import transaction failed. Check database availability, permissions and whether the destination changed.');
+      }
       finally { connection.close(); }
       report.imported = true;
     }

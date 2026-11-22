@@ -39,6 +39,11 @@ available directly, follow mise's shell activation instructions, for example
 `mise activate pwsh | Out-String | Invoke-Expression` in PowerShell, or
 `eval "$(mise activate bash)"` in Bash (add to your shell profile only if desired).
 
+Before running Compose or the VS Code tasks, remove the former SQLite override
+files (`compose.sqlite.yaml` and `compose.dev.sqlite.yaml`) from `-f` arguments
+and `COMPOSE_FILE` (including in `.env`). Keep the existing project name and
+resolved volume mapping.
+
 | Task | Existing command |
 | --- | --- |
 | `mise run setup` | `npm ci` |
@@ -269,60 +274,11 @@ Compose prefixes the volume name with its project name (normally
 `backlog-tracker_backlog-data`). Changing the project name selects different data.
 Existing native `data/backlog.sqlite` is neither mounted nor migrated automatically.
 
-In default file mode, both Docker configurations also bind
-**`./data/models` to `/app/models`**, with
-`BACKLOG_MODEL_PATH=/app/models/model.json`. This is separate from `/app/data`:
-native and Docker modes share the repository's model JSON, while their SQLite
-databases remain separate. Changing the Compose project name does **not** isolate
-this bind. Run only one API writer against a model file at a time.
-The whole directory bind also shares named graphs and ERDs.
-The [optional SQLite cutover](#opt-in-sqlite-storage-for-all-models) moves all
-model storage into the selected database; the SQLite overrides omit this bind.
-
-Before first Docker startup in file mode, create `data/models` on the host. On
-Linux, ensure the container's non-root `node` user (UID/GID 1000 in these images)
-can write the directory. For a new, empty directory, an administrator can use
-`sudo install -d -m 0750 -o 1000 -g 1000 data/models` from the repository root.
-That setup is for Docker-only use (or a native writer with the same numeric UID).
-Atomic saves require directory write/search access and file read access. New files
-default to owner-only `0600`; granting another user directory access alone does
-**not** let that user load a model. Do not make the directory world-writable.
-
-For sequential native/Docker use with different Linux UIDs, deliberately use a
-shared group. The following example uses numeric GID 1000, already the container
-user's primary group; first verify that this host group is appropriate and that
-the native user belongs to it (`id`). All parent directories must be searchable.
-With all API writers stopped, from the repository root:
-
-```sh
-# New directory only; choose the native user as owner and the shared numeric GID.
-sudo install -d -m 2770 -o "$(id -u)" -g 1000 data/models
-```
-
-For an existing directory, inspect its contents/permissions first; set the model
-directory's group with `sudo chgrp 1000 data/models` and its mode with
-`sudo chmod 2770 data/models`. The setgid bit makes replacement files inherit the
-shared group. This directory must not have the sticky bit: both writers need to
-replace a file owned by the other UID. If `model.json` is missing, start **only
-the native API**, make the first model save, then stop it. Before switching writers,
-bootstrap that file's shared access (or apply this to an existing valid model):
-
-```sh
-sudo chgrp 1000 data/models/model.json
-sudo chmod 0660 data/models/model.json
-```
-
-Subsequent saves preserve those `0660` bits while the file owner becomes the
-current writer and its group inherits from the setgid directory. No other/world
-access is granted by this setup. If you delete the file, repeat the bootstrap
-after its first save. Only one API writer may run at a time. The API does not copy
-existing ownership or ACLs; custom ACL policies must account for file replacement
-and are not guaranteed to survive saves. Docker Desktop handles bind permissions
-differently; verify model saves on your host.
-Each new named save also starts at `0600`. If switching between different writer
-UIDs, apply the same deliberate group/bootstrap permissions to each named file
-while writers are stopped; permission settings on `model.json` do not transfer
-to newly created named files.
+Both Compose files store projects, tasks, and all models in that SQLite volume.
+There is no runtime model directory bind. A fresh volume initializes on first
+start; an older database requires the [offline cutover](#sqlite-storage-and-offline-all-model-import).
+The VS Code tasks resolve the production volume for dev. For direct dev commands,
+set `BACKLOG_DEV_VOLUME` to that resolved name; dev treats it as an existing external volume.
 
 ### Container backup and restore
 
@@ -392,12 +348,15 @@ BACKLOG_MAINTENANCE_VOLUME='actual-volume-name' sh scripts/database-maintenance.
 
 Never copy a live database or mix files from different backups.
 
-The database maintenance helpers back up **only the SQLite volume**. In file mode
-or named-only v1, also copy the whole model bind with all writers stopped, and
-restore it from the same coordinated backup as the volume. Stopping only one
-Compose project is insufficient if another project or native process uses the
-same model path. After the all-model v2 cutover, the volume contains all current
-models; keep the coordinated pre-cutover backup separately for rollback.
+The database maintenance helpers copy the entire SQLite volume, including all
+current models in v2. For portability, preserve the database and sidecars together
+and restore with the helpers on the target platform. The helpers fix container
+ownership on restore. If the backup filesystem lost POSIX modes, verify and
+restore owner-only modes (`0600`) on the database and its sidecars **in the
+stopped target volume** before starting either service. Windows-native copies
+need restrictive ACLs; a Docker Desktop Linux volume still uses POSIX modes.
+Restoring a pre-cutover file-mode or named-only v1 backup also requires its matching
+model directory and a matching older runtime. Keep that coordinated backup separately.
 
 ## Native verification commands
 
@@ -511,15 +470,13 @@ preserve the existing regular file's `0777` permission bits, independent of umas
 (special setuid/setgid/sticky bits are not copied). Permissions are applied before
 rename; failures leave the original file in place. Non-regular save destinations,
 including symbolic links, are rejected. Ownership, ACLs and other extended
-metadata are not copied. Use the same writer UID, or the deliberate setgid/group
-setup above, when alternating native and Docker writers. The API does not
-automatically broaden a private file's access for another user.
+metadata are not copied. The API does not automatically broaden a private file's
+access for another user.
 
 Each load reads fresh disk state. Saves serialize the read/revision-check/write
 sequence across app instances sharing a resolved path **within one Node process**.
-Cross-process locking is not provided: use a **single API writer** per model file,
-including native versus Docker and different Compose projects. Avoid editing the
-file externally while an API save is in flight. Back up model JSON alongside
+Cross-process locking is not provided: use a **single API writer** per model file.
+Avoid editing the file externally while an API save is in flight. Back up model JSON alongside
 SQLite when both are part of your work. Programmatic callers can inject
 `createApp({dbPath, modelPath, webRoot?, namedModelStorage?})`; omitting
 `modelPath` uses the repository default, and omitting `namedModelStorage` uses
@@ -537,8 +494,8 @@ Optional environment variables for the API:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `BACKLOG_DB_PATH` | `<repo>/data/backlog.sqlite` | SQLite file; relative paths resolve from the API process working directory |
-| `BACKLOG_MODEL_PATH` | `<repo>/data/models/model.json` | Singleton file and location anchor for named graph and ERD files in file mode; unused in SQLite mode. Relative paths resolve from the standalone API working directory. Stock Compose uses `/app/models/model.json`. |
-| `BACKLOG_NAMED_MODEL_STORAGE` | `file` | Set to `sqlite` for a database with a completed all-model v2 cutover. The API refuses SQLite mode on unmarked, partial or named-only v1 storage and refuses file mode on cutover databases. |
+| `BACKLOG_MODEL_PATH` | `<repo>/data/models/model.json` | Singleton file and location anchor for named graph and ERD files in native file mode; unused in SQLite mode. Relative paths resolve from the standalone API working directory. |
+| `BACKLOG_NAMED_MODEL_STORAGE` | `file` (native), `sqlite` (Compose) | SQLite mode initializes a missing DB and requires the all-model v2 schema for an existing DB. File mode refuses cutover databases. |
 | `PORT` | `3001` | Local API/production frontend port |
 | `BACKLOG_HOST` | `127.0.0.1` | Bind address: `127.0.0.1` for native use; opt-in `0.0.0.0` for the container only; request guards remain loopback-only |
 | `BACKLOG_WEB_PORT` | `5173` | Frontend port when using the root `npm run dev` command |
@@ -557,7 +514,7 @@ to loopback; Docker Vite listens inside its container and publishes only to host
 Use the exact addresses shown above; this app is intended for access
 from the same machine.
 
-### Opt-in SQLite storage for all models
+### SQLite storage and offline all-model import
 
 The offline v2 cutover makes the selected backlog SQLite database the source of
 truth for named graphs (`named_graph_documents`), the singleton
@@ -565,14 +522,27 @@ truth for named graphs (`named_graph_documents`), the singleton
 as JSON `TEXT`; named graph and ERD UUIDs are separate namespaces. Project/task
 schema versioning is independent. Runtime v2 never accesses the source files.
 
+SQLite mode initializes only a missing database, with an empty backlog and all
+three model stores. The initialized file is published atomically on a filesystem
+that supports same-directory hard links (for example, a local Docker volume or
+NTFS). An existing zero-byte, unmarked, named-only v1, partial, or damaged database
+is refused; startup does not import JSON or repair it. The mode check runs before
+opening the database for writes. If there is a nonempty WAL, startup checks a
+private temporary copy of the database and WAL so committed changes are visible
+without touching the originals. This requires temporary disk space for both files;
+if they keep changing during inspection, retry once writes settle. Startup refuses
+a pending rollback journal; recover it through normal SQLite operation first.
+If a forced termination leaves a `.backlog-bootstrap-*.tmp` file or its staging
+sidecars, they are ignored on the next start and may be removed with all writers
+stopped. Never remove sidecars belonging to the actual database.
+
 **Owner procedure:** Stop all writers to the selected SQLite database and source
 model directory, including native, production and development containers, and
 external file editors. Back up the stopped database and any sidecars **and** the
 model directory. Leave writers stopped through preview, apply and configuration.
 Use the existing UTF-8 backlog database and model directory, even for an empty import.
-The import and SQLite-mode startup never create the database: the destination
-must already have the backlog schema, with either no model tables or a valid
-named-only v1 cutover.
+The importer never creates the database: the destination must already have the
+backlog schema, with either no model tables or a valid named-only v1 cutover.
 The CLI requires both absolute paths on each invocation, ignores the environment,
 and rejects a database with a nonempty WAL or rollback journal. If it rejects
 pending state, have the owner recover/checkpoint it through normal SQLite operation
@@ -601,7 +571,7 @@ BACKLOG_DB_PATH="$DB" BACKLOG_NAMED_MODEL_STORAGE=sqlite npm start
 
 On Windows, use the same Node commands with quoted absolute Windows paths and
 set the two environment variables in the shell that launches the API.
-`--dry-run` checks the destination and reports eligible and failed IDs by model
+`--dry-run` checks destination integrity and reports eligible and failed IDs by model
 kind without changing the database, sidecars or JSON files. Use the exact
 singleton filename, even if it does not yet exist. The scan considers the
 configured singleton if present, plus exact lowercase `<uuid>.json` and
@@ -611,42 +581,52 @@ singleton remains virtual at revision 0.
 
 On v1 upgrade, the importer validates the existing named rows and leaves their
 bytes untouched. It scans only the singleton and ERDs; retained named files are
-never imported. `--apply` repeats preflight and commits the full batch and v2
-marker together, replacing the old marker row. Invalid or unreadable eligible
+never imported. `--apply` repeats destination validation, including integrity,
+inside the write transaction before committing the full batch and v2 marker
+together, replacing the old marker row. Invalid or unreadable eligible
 files and conflicting or already cut-over destinations block the import. JSON
 bytes are preserved, including names, IDs, revisions and unresolved references.
 Source files are unchanged. An empty batch can complete cutover. The v2 database
 has no file fallback, so deletes remain effective even with retained files.
 
-For Docker production, use a rebuilt image and the **same Compose project and
-volume** as the stopped app. The one-off `app` command uses the existing volume
-and model directory bind (the image's `node` user needs read access to the source
-files and write access to the SQLite directory/database):
+For a Docker volume, remove the former SQLite override files from `-f` arguments
+and `COMPOSE_FILE` before running the commands below. Use the **same Compose
+project and resolved volume** as the stopped app. The stock production mapping is
+`<project>_backlog-data`; retain the exact mapping in your production configuration
+if you used a custom volume name. Build the production image without starting
+the service. The one-off commands mount the source directory read-only for the
+importer. The image's `node` user needs read access to that directory and its
+files and write access to the SQLite directory and database. The commands below use the repository
+`data/models`; substitute the actual source directory and singleton filename if
+different. In Git Bash on Windows, prefix each `docker compose run` command with
+`MSYS_NO_PATHCONV=1` to preserve the container paths.
 
 ```sh
-docker compose run --rm --no-deps app node apps/api/dist/model-import.js --dry-run --db /app/data/backlog.sqlite --model /app/models/model.json
-docker compose run --rm --no-deps app node apps/api/dist/model-import.js --apply --db /app/data/backlog.sqlite --model /app/models/model.json
+docker compose config --format json  # Verify name and volumes.backlog-data.name first.
+docker compose build app
+docker compose run --rm --no-deps --volume './data/models:/import/models:ro' app \
+  node apps/api/dist/model-import.js --dry-run --db /app/data/backlog.sqlite --model /import/models/model.json
+docker compose run --rm --no-deps --volume './data/models:/import/models:ro' app \
+  node apps/api/dist/model-import.js --apply --db /app/data/backlog.sqlite --model /import/models/model.json
 ```
 
-After cutover, use `compose.sqlite.yaml` for production or
-`compose.dev.sqlite.yaml` for development. These overrides require Docker
-Compose 2.24.4+ (`!override`), set SQLite mode, and remove the `/app/models`
-bind and `BACKLOG_MODEL_PATH`. Development retains its read-only source mounts.
-Use the same project and external volume that was cut over. The overrides name
-`backlog-tracker_backlog-data`; adjust the selected override's volume name if
-yours differs. Development also requires `BACKLOG_DEV_VOLUME` for interpolation
-of the base file; set it to that same volume.
+After cutover, use `compose.yaml` for production or `compose.dev.yaml` for
+development. Verify the resolved name before starting either service: a different
+name can start with a fresh, empty database. For direct dev commands, set
+`BACKLOG_DEV_VOLUME` to the same resolved volume. Development retains its
+read-only source mounts.
 
 The owner can apply the mount change by recreating the service (Bash examples,
 run only the command for the service in use):
 
 ```sh
-docker compose -p backlog-tracker -f compose.yaml -f compose.sqlite.yaml up -d --force-recreate --wait app
-BACKLOG_DEV_VOLUME=backlog-tracker_backlog-data docker compose -p backlog-tracker -f compose.dev.yaml -f compose.dev.sqlite.yaml up -d --force-recreate --wait dev
+docker compose up -d --build --force-recreate --wait app
+BACKLOG_DEV_VOLUME="$VOLUME" docker compose -p "$PROJECT" -f compose.dev.yaml up -d --build --force-recreate --wait dev
 ```
 
-An existing container keeps its original mounts until recreated. Native SQLite
-and Compose volumes remain separate.
+Set `PROJECT` and `VOLUME` from the verified production configuration before
+using the dev command. An existing container keeps its original mounts until
+recreated. Native SQLite and Compose volumes remain separate.
 
 The v2 marker blocks file-mode startup and the older named-only SQLite runtime.
 For rollback, stop all writers and restore the complete coordinated pre-cutover
