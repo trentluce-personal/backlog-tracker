@@ -76,7 +76,7 @@ test('empty database, project CRUD, defaults, task editing and individual deleti
   const task = result.data.task;
   assert.deepEqual(task, {
     id: task.id, projectId: project.id, title: 'Start tracker', description: '', priority: 'medium',
-    dueDate: null, status: 'backlog', createdAt: task.createdAt, updatedAt: task.createdAt,
+    dueDate: null, dueTime: null, status: 'backlog', createdAt: task.createdAt, updatedAt: task.createdAt,
   });
   const second = (await f.request('/api/projects', 'POST', { name: 'Work' })).data.project;
   const changed = await f.request(`/api/tasks/${task.id}`, 'PATCH', {
@@ -105,7 +105,7 @@ test('restart persists all task fields; project deletion cascades only associate
   const tasks = [];
   for (const projectId of [first.id, first.id, second.id]) {
     const result = await f.request('/api/tasks', 'POST', {
-      projectId, title: 'Persistent task', description: 'Keep me', priority: 'high', dueDate: '2026-12-31', status: 'done',
+      projectId, title: 'Persistent task', description: 'Keep me', priority: 'high', dueDate: '2026-12-31', dueTime: '23:59', status: 'done',
     });
     assert.equal(result.status, 201);
     tasks.push(result.data.task);
@@ -168,6 +168,44 @@ test('invalid task fields, impossible dates and missing projects leave existing 
     assert.equal((await f.request('/api/tasks', 'POST', input)).status, 400);
   }
   assert.equal((await f.request(`/api/tasks/${task.id}`, 'PATCH', {})).status, 400);
+});
+
+test('local task times require a date and support setting, preserving and clearing independently', async (t) => {
+  const f = await fixture(t);
+  const { project } = (await f.request('/api/projects', 'POST', { name: 'Schedule' })).data;
+  const input = { projectId: project.id, title: 'Timed task' };
+  const dueDate = '2026-09-01';
+  for (const dueTime of ['', '0:00', '24:00', '12:60', '01:00:00', '01:00Z', '01:00+02:00', '01:00\n', '０１:００', 1230, false]) {
+    assert.equal((await f.request('/api/tasks', 'POST', { ...input, dueDate, dueTime })).status, 400, JSON.stringify(dueTime));
+  }
+  assert.equal((await f.request('/api/tasks', 'POST', { ...input, dueTime: '00:00' })).status, 400);
+  assert.deepEqual((await f.request('/api/tasks')).data.tasks, []);
+
+  const created = await f.request('/api/tasks', 'POST', { ...input, dueDate, dueTime: '00:00' });
+  assert.equal(created.status, 201);
+  const { task } = created.data;
+  assert.equal(task.dueTime, '00:00');
+  const path = `/api/tasks/${task.id}`;
+  async function patch(body: unknown, date: string | null, time: string | null) {
+    const response = await f.request(path, 'PATCH', body);
+    assert.equal(response.status, 200);
+    assert.equal(response.data.task.dueDate, date);
+    assert.equal(response.data.task.dueTime, time);
+    return response.data.task;
+  }
+  await patch({ status: 'in_progress' }, dueDate, '00:00');
+  await patch({ dueDate: '2026-09-02' }, '2026-09-02', '00:00');
+  const timed = await patch({ dueTime: '23:59' }, '2026-09-02', '23:59');
+  for (const fields of [{ dueDate: null, dueTime: '08:00' }, { dueTime: '24:01' }]) {
+    assert.equal((await f.request(path, 'PATCH', { title: 'Must not change', ...fields })).status, 400);
+    assert.deepEqual((await f.request('/api/tasks')).data.tasks, [timed]);
+  }
+  await patch({ dueTime: null }, '2026-09-02', null);
+  await patch({ dueTime: '05:30' }, '2026-09-02', '05:30');
+  const cleared = await patch({ dueDate: null }, null, null);
+  assert.equal((await f.request(path, 'PATCH', { dueTime: '05:30' })).status, 400);
+  assert.deepEqual((await f.request('/api/tasks')).data.tasks, [cleared]);
+  await patch({ dueDate, dueTime: '12:00' }, dueDate, '12:00');
 });
 
 test('length boundaries, calendar dates and SQL-like strings roundtrip safely', async (t) => {

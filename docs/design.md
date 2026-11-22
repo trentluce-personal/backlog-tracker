@@ -229,15 +229,16 @@ merely to make a panel tidier.
 For relevant appearance or interaction work, apply `ui-quality` and
 `frontend-review` in the implementation worker's own context:
 
-1. Inspect the adjacent/approved reference, implement with the pieces above, and run
-   the actual app with `npm run dev` (or the appropriate built app).
-2. Before mutations, follow README's isolated browser environment: fresh temporary
-   SQLite/model directory and alternate ports. A fresh browser profile alone is not
-   persistent-data isolation.
+1. Inspect the adjacent/approved reference and implement with the pieces above.
+2. Follow [Browser verification](../README.md#browser-verification): attach only to
+   the owner's already-running app at its actual URL. If the app or URL is missing,
+   ask the owner or report the review as blocked. Keep app data read-only and mark
+   write-dependent scenarios as blocked. Do not launch, restart, stop, or provision
+   an app for review.
 3. Use only the pinned CLI through `npm run browser --`. Use fresh DOM snapshots for
    interaction and screenshots **read as images** for appearance; snapshots alone
-   cannot verify visuals. Keep screenshots/traces in ignored `artifacts/` or
-   `.playwright-cli/`.
+   cannot verify visuals. Keep non-private screenshots/traces in ignored
+   `artifacts/` or `.playwright-cli/`; skip captures that would include private data.
 4. Exercise changed controls at applicable desktop/mobile sizes and in both themes.
    Check keyboard/focus behavior, pointer interaction, console errors, and failed
    requests; add affected states and motion checks where relevant.

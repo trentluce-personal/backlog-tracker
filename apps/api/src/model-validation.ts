@@ -1,6 +1,6 @@
 import { HttpError, object } from './validation.ts';
 import { modelInput, targetModelId, type ModelInput, type ModelConstraint, type ModelIndex, type DefinitionNode, type TypeDefinition } from './model-schema.ts';
-import { openNamedModelStore } from './model-store.ts';
+import type { openNamedModelStore } from './model-store.ts';
 import { parsePropertyType } from './model-types.ts';
 
 export interface Location { modelId: string; path: string }
@@ -20,20 +20,19 @@ export function candidate(value: unknown, exporting = false): Candidate & { form
 }
 const tuple = (modelId: string, kind: string, id: string) => JSON.stringify([modelId, kind, id]);
 const vectorFilterTypes = new Set(['INTEGER', 'FLOAT', 'STRING', 'BOOLEAN', 'DATE', 'LOCAL TIME', 'ZONED TIME', 'LOCAL DATETIME', 'ZONED DATETIME', 'DURATION']);
-export async function compose(input: Candidate, modelPath: string): Promise<Composition> {
+export async function compose(input: Candidate, store: Pick<ReturnType<typeof openNamedModelStore>, 'readStored'>): Promise<Composition> {
   const { modelId: rootId, excludeDrafts } = input;
   const issues: Issue[] = [], dependencies = new Map<string, number>();
   const models = new Map<string, ModelInput | null>([[rootId, input.model]]);
   const definitions = new Map<string, ComposedDefinition>(), constraints = new Map<string, ComposedConstraint>(), indexes = new Map<string, ComposedIndex>();
   const scanned = new Set<string>(), active = new Set<string>();
-  const store = openNamedModelStore(modelPath);
   let operations = 0;
   const add = (severity: Issue['severity'], code: string, loc: Location, message: string, related?: Location[]) => { issues.push({ severity, code, ...loc, message, ...(related?.length ? { related } : {}) }); };
   const budget = () => { if (++operations > 20000 || models.size > 256 || definitions.size > 5000) throw new HttpError(400, 'Model dependency budget exceeded.'); };
   async function load(id: string) {
     budget();
     if (!models.has(id)) {
-      try { const { entry } = await store.readPhysical(id); models.set(id, entry.model); dependencies.set(id, entry.model.revision); }
+      try { const { entry } = await store.readStored(id); models.set(id, entry.model); dependencies.set(id, entry.model.revision); }
       catch { models.set(id, null); }
     }
     return models.get(id);

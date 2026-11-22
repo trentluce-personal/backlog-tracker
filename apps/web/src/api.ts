@@ -1,5 +1,19 @@
 import type { ModelInput, StoredModel, NamedModel, ModelSummary, ReferenceCatalogModel, Project, Task, TaskInput, ValidationResult, ExportFormat, ModelExport } from './types';
 
+export interface BackendSchemaResponse {
+  sqlite: {
+    userVersion: number;
+    tables: {
+      name: string;
+      ddl: string | null;
+      columns: { position: number; name: string; declaredType: string; notNull: boolean; defaultSql: string | null; primaryKeyPosition: number }[];
+      foreignKeys: { id: number; sequence: number; table: string; from: string; to: string | null; onUpdate: string; onDelete: string; match: string }[];
+      indexes: { name: string; unique: boolean; origin: string; partial: boolean; ddl: string | null; columns: { sequence: number; position: number; name: string | null }[] }[];
+    }[];
+  };
+  jsonStorage: { name: string; schemaVersion: number; fields: string[]; collections: { name: string; fields: string[] }[] }[];
+}
+
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly validation?: ValidationResult) { super(message); }
 }
@@ -24,6 +38,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
 }
 
 export const api = {
+  backendSchema: () => request<BackendSchemaResponse>('/backend-schema'),
   modelNodeDefinitions: () => request<{ models: ReferenceCatalogModel[] }>('/model-catalog'),
   validateModel: (modelId: string, model: ModelInput, excludeDrafts: boolean) => request<ValidationResult>('/model-validation', 'POST', { modelId, model, excludeDrafts }),
   exportModel: (modelId: string, model: ModelInput, excludeDrafts: boolean, format: ExportFormat, acknowledgeGraphTypeReplacement: boolean) => request<ModelExport>('/model-export', 'POST', { modelId, model, excludeDrafts, format, ...(acknowledgeGraphTypeReplacement ? { acknowledgeGraphTypeReplacement: true } : {}) }),

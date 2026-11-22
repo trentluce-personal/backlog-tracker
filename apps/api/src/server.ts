@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { openStore } from './store.ts';
+import { openStore, type BackendSchemaResponse } from './store.ts';
 import { openModelStore, openNamedModelStore } from './model-store.ts';
 import { MODEL_BODY_LIMIT } from './model-schema.ts';
 import { candidate, compose } from './model-validation.ts';
@@ -52,12 +52,13 @@ function protect(request: IncomingMessage) {
   }
 }
 
-export function createApp(options: { dbPath: string; modelPath?: string; webRoot?: string }) {
-  const store = openStore(options.dbPath);
+export function createApp(options: { dbPath: string; modelPath?: string; webRoot?: string; namedModelStorage?: 'file' | 'sqlite' }) {
+  const sqliteModels = options.namedModelStorage === 'sqlite';
+  const store = openStore(options.dbPath, sqliteModels);
   const modelPath = options.modelPath ?? resolve(root, 'data/models/model.json');
-  const modelStore = openModelStore(modelPath);
-  const namedModelStore = openNamedModelStore(modelPath);
-  const erStore = openErStore(modelPath);
+  const namedModelStore = openNamedModelStore(modelPath, { documents: store.modelDocuments?.graphs });
+  const modelStore = openModelStore(modelPath, namedModelStore);
+  const erStore = openErStore(modelPath, { documents: store.modelDocuments?.erds });
   const webRoot = resolve(options.webRoot ?? resolve(root, 'apps/web/dist'));
   const server = createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -66,6 +67,34 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
       protect(request);
       const url = new URL(request.url || '/', 'http://localhost');
       const method = request.method;
+      if (url.pathname === '/api/backend-schema' && method === 'GET') {
+        const metadata: BackendSchemaResponse = {
+          sqlite: store.backendSchema(),
+          jsonStorage: [
+            {
+              name: sqliteModels ? 'Graph model (named and singleton documents in SQLite)' : 'Graph model', schemaVersion: 3,
+              fields: ['schemaVersion', 'revision', 'name (named models only)', 'nodes', 'relationshipTypes', 'relationships', 'constraints', 'indexes'],
+              collections: [
+                { name: 'nodes', fields: ['definitions / references', 'placement', 'properties / target'] },
+                { name: 'relationshipTypes', fields: ['definitions / references', 'properties / target'] },
+                { name: 'relationships', fields: ['type', 'endpoints', 'cardinalities'] },
+                { name: 'constraints', fields: ['kind', 'target', 'properties'] },
+                { name: 'indexes', fields: ['kind', 'targets', 'properties', 'filterProperties', 'config'] },
+              ],
+            },
+            {
+              name: sqliteModels ? 'PostgreSQL ERD (SQLite documents)' : 'PostgreSQL ERD', schemaVersion: 1,
+              fields: ['kind: sql', 'schemaVersion', 'dialect: postgresql', 'revision', 'name', 'tables', 'foreignKeys'],
+              collections: [
+                { name: 'tables', fields: ['id', 'name', 'x', 'y', 'columns'] },
+                { name: 'columns', fields: ['id', 'name', 'dataType', 'nullable', 'primaryKey', 'unique'] },
+                { name: 'foreignKeys', fields: ['id', 'name', 'sourceTableId', 'sourceColumnId', 'targetTableId', 'targetColumnId'] },
+              ],
+            },
+          ],
+        };
+        return json(response, 200, metadata);
+      }
       if (url.pathname === '/api/erd-export' && method === 'POST') {
         return json(response, 200, exportErModel(await body(request, ERD_BODY_LIMIT)));
       }
@@ -89,7 +118,7 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
       if ((url.pathname === '/api/model-validation' || url.pathname === '/api/model-export') && method === 'POST') {
         const exporting = url.pathname === '/api/model-export';
         const input = candidate(await body(request, MODEL_BODY_LIMIT), exporting);
-        const composition = await compose(input, modelPath);
+        const composition = await compose(input, namedModelStore);
         if (!exporting) return json(response, 200, composition.validation);
         const result = exportModel(composition, input.modelId, input.format!, input.acknowledgeGraphTypeReplacement);
         return json(response, result.status, result.body);
@@ -169,9 +198,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer from 1 to 65535.');
   const host = process.env.BACKLOG_HOST ?? '127.0.0.1';
   if (!['127.0.0.1', '0.0.0.0'].includes(host)) throw new Error('BACKLOG_HOST must be 127.0.0.1 or 0.0.0.0.');
+  const namedModelStorage = process.env.BACKLOG_NAMED_MODEL_STORAGE ?? 'file';
+  if (namedModelStorage !== 'file' && namedModelStorage !== 'sqlite') throw new Error('BACKLOG_NAMED_MODEL_STORAGE must be file or sqlite.');
   const server = createApp({
     dbPath: process.env.BACKLOG_DB_PATH ? resolve(process.env.BACKLOG_DB_PATH) : resolve(root, 'data/backlog.sqlite'),
     modelPath: process.env.BACKLOG_MODEL_PATH ? resolve(process.env.BACKLOG_MODEL_PATH) : resolve(root, 'data/models/model.json'),
+    namedModelStorage,
   });
   server.on('error', (error) => { console.error(error.message); server.close(); process.exitCode = 1; });
   server.listen(port, host, () => {

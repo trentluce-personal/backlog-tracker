@@ -20,9 +20,10 @@ simply to follow these instructions.
    implementation and derive observable conventions from it. Reuse existing
    components and tokens; classify findings as functional bugs, accessibility/UX
    issues, or optional polish rather than imposing taste.
-2. Implement the smallest consistent change. Run the real app and iterate through
-   `frontend-review`: DOM snapshots for interaction, screenshots actually read as
-   images for appearance, applicable desktop/mobile sizes and both themes,
+2. Implement the smallest consistent change. Attach only to the user's
+   already-running app at its actual URL and iterate through `frontend-review`:
+   DOM snapshots for nonpersisting interactions, non-private screenshots read
+   as images for appearance, applicable desktop/mobile sizes and both themes,
    keyboard/focus behavior, and console/failed requests.
 3. Repair observed issues and repeat the affected scenarios before completion. A
    successful build, saved-but-unviewed screenshot, or DOM snapshot alone is not
@@ -30,7 +31,8 @@ simply to follow these instructions.
    but disclose exactly what was not exercised or viewed.
 4. A static/read-only reviewer evaluates supplied evidence without claiming it as
    personal execution; the implementation worker still owns this running repair
-   loop. If browser mutation or image inspection is blocked, report the limitation.
+   loop. Report a missing app/URL or unavailable image inspection as blocked when
+   it prevents review. Mark scenarios requiring app data writes as blocked.
 
 ## Controls and accessibility
 
@@ -56,7 +58,9 @@ simply to follow these instructions.
 - Use meaningful input types, names, autocomplete, lengths, and numeric bounds.
   Associate hints/errors with `aria-describedby` when appropriate; mark invalid
   fields and focus the first actionable error. Never block password paste.
-- Exercise validation, API failure, loading, empty data, and success where affected.
+- Exercise validation, API failure, loading, empty data, and success where affected
+  and observable without writing app data. Use isolated automated native fixtures
+  for applicable API coverage; write-dependent browser scenarios remain blocked.
   Preserve drafts on failure and prevent duplicate requests while pending.
 - Announce async results without stealing focus. Avoid stale success messages.
   Keep busy status intelligible; do not make an animated spinner the only feedback.
@@ -88,7 +92,8 @@ simply to follow these instructions.
 - The app's defaults intentionally do not follow OS preferences: dark theme and
   full motion are the missing/invalid-preference defaults. Check this documented
   independence when emulating OS reduced motion, and separately exercise the saved
-  app override through **Motion on — reduce motion** / **Enable animations**.
+  app override through **Motion on — reduce motion** / **Enable animations** in
+  your temporary browser profile.
   Media emulation alone does not set `backlog-motion`.
 - Actions remain immediate; effects clean up, rapid activation remains usable,
   and animation does not change accessible names or cause layout jumps. Reduced

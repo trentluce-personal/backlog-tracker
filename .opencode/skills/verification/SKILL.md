@@ -32,40 +32,37 @@ Skills grant no tools or permissions; read-only agents delegate execution.
      fixtures isolate their database/model paths and exercise development and
      production startup; use it only when relevant to the change.
    - Browser: `npm run browser -- ...` invokes the pinned `@playwright/cli` 0.1.22
-     with installed Chrome. Follow `frontend-review` and README's browser section;
+     with installed Chrome. Follow `frontend-review` and
+     [Browser verification](../../../README.md#browser-verification);
      do not add a browser dependency/tool or download another browser.
    - Docs/harness/manifests: inspect scoped diffs and all new files, validate local
      references and frontmatter/JSON as applicable, and run `git diff --check`.
      If already installed, `opencode debug config` checks resolved configuration
      without a model request; do not download/update tools or expose resolved
      credentials. Inspect only necessary non-secret fields.
-3. Confirm isolation before any mutation. Native API/startup tests allocate fresh
-   temporary SQLite and model paths for their own children; they do not redirect
-   an already-running development or Compose API. Normal development and Compose
-   traffic use the user's actual local data. Compose defines one `app` service;
-   its named SQLite volume persists and `./data/models` is a shared host bind.
-4. For browser mutations, follow README's **Browser verification** recipe: create
-   a fresh per-session temporary directory, set `BACKLOG_DB_PATH` to a SQLite file
-   inside it and `BACKLOG_MODEL_PATH` to a model file directly inside that same
-   dedicated directory, and start your own app on verified-free alternate `PORT`
-   and `BACKLOG_WEB_PORT` values. The dedicated parent directory is required to
-   isolate named-model siblings as well as the singleton model. Verify these paths
-   and the target URL before creating, editing, saving, or deleting anything.
-   A fresh or temporary browser profile isolates browser identity/state only; it
-   is never persistent-data isolation. If a verified isolated target is unavailable,
-   mark mutation scenarios **blocked** rather than using live data.
-5. Never seed or delete live projects/tasks/models, truncate data, or use
-   `docker compose down -v` to make verification possible. Do not stop a user's
-   existing server or mutate shared model files to create a test target. Do not
-   invent an unverified isolation recipe.
-6. Run selected checks and inspect actual output and relevant images. Use ignored
+3. Keep automated native tests separate from browser verification. Native API/startup
+   tests allocate fresh temporary SQLite and model paths for their own children;
+   they do not redirect an already-running development or Compose API. Normal
+   development and Compose traffic use the user's actual local data. Compose defines
+   one `app` service; its named SQLite volume persists and `./data/models` is a shared
+   host bind. Owner startup and maintenance are also separate workflows.
+4. For browser/UI checks, attach only to the user's already-running app at its
+   actual URL. If the app is not running or the URL is unknown, ask the owner to
+   start it or provide the URL, as needed, or report the check as **blocked**.
+   Never start, restart, or stop an app for browser work, use PowerShell or another
+   app launcher, provision databases or model files, or choose alternate ports.
+   Use your own named session and close only that session. Treat app data as
+   read-only through the UI, API, and storage. Perform nonpersisting interactions
+   only and mark write-dependent browser scenarios **blocked**. A temporary
+   browser profile isolates browser state only, never app data.
+5. Run selected checks and inspect actual output and relevant images. Use ignored
    `artifacts/` or `.playwright-cli/` for non-private screenshots, traces, and
    browser logs; exclude credentials and personal content. Saving an artifact is
    not inspecting it. For failures load `regression-debugging`; make the minimal
    repair and repeat the failed scenario plus affected checks before completion.
    Add meaningful regression coverage for consequential behavior when practical,
    not a new runner for a reversible low-impact edit.
-7. Reuse worker/baseline evidence only while its target and relevant code still
+6. Reuse worker/baseline evidence only while its target and relevant code still
    match. Repeat relevant checks after integration edits, failures, or unresolved
    concerns. Optional diagnostics are not universal completion gates.
 

@@ -14,6 +14,7 @@ export interface TaskInput {
   description: string;
   priority: Priority;
   dueDate: string | null;
+  dueTime: string | null;
   status: Status;
 }
 
@@ -61,8 +62,16 @@ function choice<const T extends string>(value: unknown, values: readonly T[], fi
   return value as T;
 }
 
+function dueTime(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || value.length !== 5 || !/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(value)) {
+    throw new HttpError(400, 'Due time must be a valid HH:mm time or null.');
+  }
+  return value;
+}
+
 export function taskInput(value: unknown, partial = false): Partial<TaskInput> {
-  const body = object(value, ['projectId', 'title', 'description', 'priority', 'dueDate', 'status']);
+  const body = object(value, ['projectId', 'title', 'description', 'priority', 'dueDate', 'dueTime', 'status']);
   if (partial && Object.keys(body).length === 0) throw new HttpError(400, 'Provide at least one task field.');
   const result: Partial<TaskInput> = {};
   if (!partial || 'projectId' in body) result.projectId = id(body.projectId);
@@ -71,5 +80,6 @@ export function taskInput(value: unknown, partial = false): Partial<TaskInput> {
   if ('priority' in body) result.priority = choice(body.priority, ['low', 'medium', 'high'], 'priority');
   if ('status' in body) result.status = choice(body.status, ['backlog', 'in_progress', 'done'], 'status');
   if ('dueDate' in body) result.dueDate = dueDate(body.dueDate);
+  if ('dueTime' in body) result.dueTime = dueTime(body.dueTime);
   return result;
 }

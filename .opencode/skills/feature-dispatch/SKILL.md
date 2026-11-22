@@ -95,10 +95,14 @@ adjacent/approved reference screen: <screen, route/state, approved artifact, or 
 not relevant>. Implement with the repository's existing tokens, components, and
 interaction patterns; do not redesign by taste.
 
-After implementation, run the actual app with the pinned npm run browser -- CLI.
+After implementation, attach only to the user's already-running app at its actual
+URL with the pinned npm run browser -- CLI. If the app or URL is missing, ask the
+owner to start it or provide the URL, as needed, or report the review as blocked.
+Do not launch, restart, stop, or provision an app for browser work. Use nonpersisting
+interactions only; mark any scenario requiring an app data write as blocked.
 Use fresh DOM snapshots and their refs to exercise interactions, and take screenshots
-that you actually read as images to verify appearance. Exercise each changed control
-and state at applicable desktop/mobile sizes and in both light and dark themes;
+without private data that you actually read as images to verify appearance. Exercise
+applicable read-only states at desktop/mobile sizes and in both light and dark themes;
 include keyboard/focus behavior, console errors, and failed requests. Use
 <scenario-specific states and artifacts>. Repair every observed issue within scope,
 then repeat the affected interactions and visual checks before reporting completion.
@@ -107,9 +111,9 @@ visual verification. Preserve proportionality for text-only or genuinely low-ris
 edits and state precisely what was or was not visually reviewed.
 ```
 
-Give the worker verified-safe runtime targets under `verification`; require fresh
-per-session SQLite/model directories and alternate ports for browser mutations.
-Never imply that a fresh browser profile isolates persistent server writes.
+Give the worker the actual URL if known and the read-only target rules from
+[Browser verification](../../../README.md#browser-verification). Automated native
+test fixtures are separate from browser work.
 
 Launch independent tasks together. While agents work, inspect context, review
 contracts, and maintain the task list without duplicating their assignments.
@@ -125,13 +129,11 @@ Track partial work as incomplete until integrated and verified. Resolve failures
 with the responsible owner or hand ownership to another worker after that writer
 finishes. The read-only dispatcher never takes write ownership itself.
 
-The dispatcher coordinates tests, fixture setup, server changes, dependency
-installs, and browser sessions to avoid shared-state collisions. Workers may run
-non-mutating scoped checks; give shared-state checks one owner at a time. Browser
-workers use distinct named sessions and artifact paths and close only their own
-sessions. Run database/model-mutating verification only against verified isolated
-paths, never the default native data or normal Compose `app` data. Fresh browser
-profiles do not isolate persistent writes; use `verification` for target safety.
+The dispatcher coordinates automated tests, dependency installs, and browser
+sessions to avoid shared-state collisions. Give shared-state checks one owner at
+a time. Native API/startup tests use their own isolated fixtures. Browser workers
+use distinct named sessions and non-private artifact paths and close only their
+own sessions. Use `verification` for target safety.
 
 Load `verification` to select integrated checks and inspect acceptance-linked
 worker evidence. Reuse evidence still applicable; delegate only checks needed for

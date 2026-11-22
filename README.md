@@ -2,7 +2,7 @@
 
 A local-only personal projects and tasks app. Create projects, add and edit tasks,
 track **Backlog**, **In Progress**, and **Done**, and search/filter your backlog.
-Tasks have descriptions, low/medium/high priority, and optional due dates. Your
+Tasks have descriptions, low/medium/high priority, and optional due dates and times. Your
 data stays in a local SQLite database and model JSON files; there are no accounts
 or cloud services.
 
@@ -269,17 +269,19 @@ Compose prefixes the volume name with its project name (normally
 `backlog-tracker_backlog-data`). Changing the project name selects different data.
 Existing native `data/backlog.sqlite` is neither mounted nor migrated automatically.
 
-Both Docker modes also bind **`./data/models` to `/app/models`**, with
+In default file mode, both Docker configurations also bind
+**`./data/models` to `/app/models`**, with
 `BACKLOG_MODEL_PATH=/app/models/model.json`. This is separate from `/app/data`:
 native and Docker modes share the repository's model JSON, while their SQLite
 databases remain separate. Changing the Compose project name does **not** isolate
 this bind. Run only one API writer against a model file at a time.
-The whole directory bind also shares every named `<uuid>.json` model; no separate
-mount or migration is needed for named saves.
+The whole directory bind also shares named graphs and ERDs.
+The [optional SQLite cutover](#opt-in-sqlite-storage-for-all-models) moves all
+model storage into the selected database; the SQLite overrides omit this bind.
 
-Before first Docker startup, create `data/models` on the host. On Linux, ensure
-the container's non-root `node` user (UID/GID 1000 in these images) can write the
-directory. For a new, empty directory, an administrator can use
+Before first Docker startup in file mode, create `data/models` on the host. On
+Linux, ensure the container's non-root `node` user (UID/GID 1000 in these images)
+can write the directory. For a new, empty directory, an administrator can use
 `sudo install -d -m 0750 -o 1000 -g 1000 data/models` from the repository root.
 That setup is for Docker-only use (or a native writer with the same numeric UID).
 Atomic saves require directory write/search access and file read access. New files
@@ -390,13 +392,12 @@ BACKLOG_MAINTENANCE_VOLUME='actual-volume-name' sh scripts/database-maintenance.
 
 Never copy a live database or mix files from different backups.
 
-The database maintenance helpers back up **only the SQLite volume**. They do not
-include the model bind. With all native/container API writers stopped, separately
-copy `data/models` (including `model.json`, if present) to a safe location outside
-the repository. To restore, retain a separate current backup, replace that model
-directory from the chosen backup, and verify container write permissions before
-starting one API writer. Stopping only one Compose project is insufficient if
-another project or native process uses the same model path.
+The database maintenance helpers back up **only the SQLite volume**. In file mode
+or named-only v1, also copy the whole model bind with all writers stopped, and
+restore it from the same coordinated backup as the volume. Stopping only one
+Compose project is insufficient if another project or native process uses the
+same model path. After the all-model v2 cutover, the volume contains all current
+models; keep the coordinated pre-cutover backup separately for rollback.
 
 ## Native verification commands
 
@@ -425,37 +426,35 @@ The startup check triggers API reload by touching the server source timestamp
 
 ### Browser verification
 
+Use only the user's already-running app at its actual URL. If it is not running
+or the URL is unknown, ask the owner to start it or provide the URL, as needed,
+or report browser verification as blocked. Never start, restart, or stop an app
+for browser work. Do not use PowerShell or another app launcher, provision a
+database or model files, or pick alternate ports to create a review target.
+
+Treat app data as read-only. Inspect existing views and use nonpersisting controls
+such as navigation, filters that do not save, and opening or dismissing dialogs.
+Do not seed, create, edit, save, delete, change status, or otherwise mutate app
+data through the UI, API, or storage. Mark scenarios that require a write as
+**blocked**. The owner startup and maintenance instructions and the automated
+native test fixtures above are separate workflows.
+
 The root dependency pins `@playwright/cli` to **0.1.22**. Use an existing Chrome
-installation; setup does not install browser engines. For an isolated manual
-verification target, create a fresh per-session temporary directory and use free alternate ports
-before starting the app, for example in PowerShell:
-
-```powershell
-$reviewDirectory = Join-Path $env:TEMP ("backlog-review-" + [guid]::NewGuid())
-New-Item -ItemType Directory -Path $reviewDirectory -ErrorAction Stop | Out-Null
-$env:BACKLOG_DB_PATH = Join-Path $reviewDirectory 'backlog.sqlite'
-$env:BACKLOG_MODEL_PATH = Join-Path $reviewDirectory 'model.json'
-$env:PORT = '3101'
-$env:BACKLOG_WEB_PORT = '5273'
-npm run dev
-```
-
-The fresh directory isolates the SQLite database, legacy `model.json`, and all
-named-model sibling files for this session. A unique model filename directly in
-the shared temporary directory does not isolate the named-model collection.
-
-In a second terminal from the repository root:
+installation. From the repository root, replace `ACTUAL_APP_URL` with the verified
+URL and `review-unique` with an unused name for your own session:
 
 ```sh
-npm run browser -- -s=review open http://127.0.0.1:5273 --browser=chrome
-npm run browser -- -s=review snapshot
-npm run browser -- -s=review close
+npm run browser -- -s=review-unique open "ACTUAL_APP_URL" --browser=chrome
+# Inspect only views and capture only artifacts that do not contain private data.
+npm run browser -- -s=review-unique close
 ```
 
-The browser uses a separate temporary profile unless `--persistent` is requested.
-Browser sessions do not isolate server data: verify the server's database and model paths
-before creating or deleting anything. CLI snapshots/logs in `.playwright-cli/`
-and screenshots in `artifacts/` are ignored by Git.
+Use the session's temporary browser profile and close only the session you opened.
+Browser-local theme and motion settings can be exercised in that profile; it does
+not isolate app data. Keep credentials and private project, task, and model data
+out of snapshots, logs, traces, and screenshots. Skip captures that would include
+private content; store non-private artifacts only in ignored `.playwright-cli/`
+or `artifacts/`.
 
 ## Data, configuration, and backup
 
@@ -465,7 +464,7 @@ startup. SQLite may also create `-wal` and `-shm` sidecar files. The local SQLit
 database and its sidecars, other private runtime data, dependencies, build output,
 and verification artifacts are ignored by Git. Model JSON is the exception below.
 
-Data models are stored separately as schema-versioned JSON at
+In default file mode, data models are stored separately as schema-versioned JSON at
 **`data/models/model.json`**, also relative to the repository root. Loading a missing
 file returns an empty model at revision 0 without creating directories or a file.
 A successful save creates the parent directory if necessary and increments the
@@ -475,7 +474,7 @@ cleaned up after failures. This protects against partial replacement, but is not
 a power-loss durability guarantee. Invalid/unsupported JSON and read/write errors
 return meaningful errors and never silently reset existing data.
 
-Named saves are siblings of that configured singleton file, in
+By default, named saves are siblings of that configured singleton file, in
 **`dirname(BACKLOG_MODEL_PATH)`** (normally `data/models`). The server generates
 lowercase UUIDv4 filenames, `<uuid>.json`. Each contains exactly
 `{schemaVersion:3,revision,name,nodes,relationshipTypes,relationships,constraints,indexes}`; the ID is derived from
@@ -521,23 +520,25 @@ sequence across app instances sharing a resolved path **within one Node process*
 Cross-process locking is not provided: use a **single API writer** per model file,
 including native versus Docker and different Compose projects. Avoid editing the
 file externally while an API save is in flight. Back up model JSON alongside
-SQLite when both are part of your work; no SQLite schema changes store models.
-Programmatic callers can inject `createApp({dbPath, modelPath, webRoot?})`;
-omitting `modelPath` uses the repository default, independent of environment
-variables. `BACKLOG_MODEL_PATH` is applied by the standalone server entrypoint.
+SQLite when both are part of your work. Programmatic callers can inject
+`createApp({dbPath, modelPath, webRoot?, namedModelStorage?})`; omitting
+`modelPath` uses the repository default, and omitting `namedModelStorage` uses
+`file`, independent of environment variables.
 
-To back up: stop the app, then copy the entire `data` directory to a safe location.
-To restore: stop the app and replace `data` with that backup. For a custom path,
-back up the SQLite file and any adjacent `-wal`/`-shm` files together. Do not copy
-only the main SQLite file while the app is running. Schema exports are available
-through the model API; they do not back up SQLite or Neo4j graph data.
+In file mode, stop all writers and copy the entire `data` directory to a safe
+location. For custom paths, copy the full model directory and the SQLite database
+with all sidecars as one coordinated backup. Restore both from the same backup
+while stopped. After all-model v2 cutover, current backups need only the stopped
+SQLite database with its sidecars. Schema exports do not back up SQLite or Neo4j
+graph data.
 
 Optional environment variables for the API:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `BACKLOG_DB_PATH` | `<repo>/data/backlog.sqlite` | SQLite file; relative paths resolve from the API process working directory |
-| `BACKLOG_MODEL_PATH` | `<repo>/data/models/model.json` | Legacy singleton JSON file and location anchor for named UUID files in its parent directory; relative paths resolve from the standalone API working directory. Compose explicitly uses `/app/models/model.json` on the whole-directory host bind. |
+| `BACKLOG_MODEL_PATH` | `<repo>/data/models/model.json` | Singleton file and location anchor for named graph and ERD files in file mode; unused in SQLite mode. Relative paths resolve from the standalone API working directory. Stock Compose uses `/app/models/model.json`. |
+| `BACKLOG_NAMED_MODEL_STORAGE` | `file` | Set to `sqlite` for a database with a completed all-model v2 cutover. The API refuses SQLite mode on unmarked, partial or named-only v1 storage and refuses file mode on cutover databases. |
 | `PORT` | `3001` | Local API/production frontend port |
 | `BACKLOG_HOST` | `127.0.0.1` | Bind address: `127.0.0.1` for native use; opt-in `0.0.0.0` for the container only; request guards remain loopback-only |
 | `BACKLOG_WEB_PORT` | `5173` | Frontend port when using the root `npm run dev` command |
@@ -556,6 +557,105 @@ to loopback; Docker Vite listens inside its container and publishes only to host
 Use the exact addresses shown above; this app is intended for access
 from the same machine.
 
+### Opt-in SQLite storage for all models
+
+The offline v2 cutover makes the selected backlog SQLite database the source of
+truth for named graphs (`named_graph_documents`), the singleton
+(`legacy_graph_document`) and PostgreSQL ERDs (`erd_documents`). Models are stored
+as JSON `TEXT`; named graph and ERD UUIDs are separate namespaces. Project/task
+schema versioning is independent. Runtime v2 never accesses the source files.
+
+**Owner procedure:** Stop all writers to the selected SQLite database and source
+model directory, including native, production and development containers, and
+external file editors. Back up the stopped database and any sidecars **and** the
+model directory. Leave writers stopped through preview, apply and configuration.
+Use the existing UTF-8 backlog database and model directory, even for an empty import.
+The import and SQLite-mode startup never create the database: the destination
+must already have the backlog schema, with either no model tables or a valid
+named-only v1 cutover.
+The CLI requires both absolute paths on each invocation, ignores the environment,
+and rejects a database with a nonempty WAL or rollback journal. If it rejects
+pending state, have the owner recover/checkpoint it through normal SQLite operation
+and shut down cleanly before retrying; do not remove sidecars by hand.
+
+On POSIX, import and SQLite-mode startup require the database and any existing
+`-wal`, `-shm`, or `-journal` sidecars to have no group or other permission bits
+(for example, `0600`). Database and sidecar symlinks are rejected. The app and
+importer do not change existing permissions. The owner must secure the database,
+its current and future sidecars, backups, and parent directory against unauthorized
+access or replacement (for example, a private `0700` data directory), including
+any filesystem ACLs. Windows ACLs are not inferred from POSIX mode bits; on
+Windows the owner must set restrictive ACLs on the database and its directory,
+including inheritance for new sidecars.
+
+Native example (from the repo root after `npm run build`, in a POSIX shell;
+substitute the actual paths):
+
+```sh
+DB=/absolute/path/to/data/backlog.sqlite
+MODEL=/absolute/path/to/data/models/model.json
+node apps/api/dist/model-import.js --dry-run --db "$DB" --model "$MODEL"
+node apps/api/dist/model-import.js --apply --db "$DB" --model "$MODEL"
+BACKLOG_DB_PATH="$DB" BACKLOG_NAMED_MODEL_STORAGE=sqlite npm start
+```
+
+On Windows, use the same Node commands with quoted absolute Windows paths and
+set the two environment variables in the shell that launches the API.
+`--dry-run` checks the destination and reports eligible and failed IDs by model
+kind without changing the database, sidecars or JSON files. Use the exact
+singleton filename, even if it does not yet exist. The scan considers the
+configured singleton if present, plus exact lowercase `<uuid>.json` and
+`erd-<uuid>.json` UUIDv4 regular-file siblings. Symlinks, directories and unrelated
+siblings are ignored; a nonregular configured singleton blocks import. A missing
+singleton remains virtual at revision 0.
+
+On v1 upgrade, the importer validates the existing named rows and leaves their
+bytes untouched. It scans only the singleton and ERDs; retained named files are
+never imported. `--apply` repeats preflight and commits the full batch and v2
+marker together, replacing the old marker row. Invalid or unreadable eligible
+files and conflicting or already cut-over destinations block the import. JSON
+bytes are preserved, including names, IDs, revisions and unresolved references.
+Source files are unchanged. An empty batch can complete cutover. The v2 database
+has no file fallback, so deletes remain effective even with retained files.
+
+For Docker production, use a rebuilt image and the **same Compose project and
+volume** as the stopped app. The one-off `app` command uses the existing volume
+and model directory bind (the image's `node` user needs read access to the source
+files and write access to the SQLite directory/database):
+
+```sh
+docker compose run --rm --no-deps app node apps/api/dist/model-import.js --dry-run --db /app/data/backlog.sqlite --model /app/models/model.json
+docker compose run --rm --no-deps app node apps/api/dist/model-import.js --apply --db /app/data/backlog.sqlite --model /app/models/model.json
+```
+
+After cutover, use `compose.sqlite.yaml` for production or
+`compose.dev.sqlite.yaml` for development. These overrides require Docker
+Compose 2.24.4+ (`!override`), set SQLite mode, and remove the `/app/models`
+bind and `BACKLOG_MODEL_PATH`. Development retains its read-only source mounts.
+Use the same project and external volume that was cut over. The overrides name
+`backlog-tracker_backlog-data`; adjust the selected override's volume name if
+yours differs. Development also requires `BACKLOG_DEV_VOLUME` for interpolation
+of the base file; set it to that same volume.
+
+The owner can apply the mount change by recreating the service (Bash examples,
+run only the command for the service in use):
+
+```sh
+docker compose -p backlog-tracker -f compose.yaml -f compose.sqlite.yaml up -d --force-recreate --wait app
+BACKLOG_DEV_VOLUME=backlog-tracker_backlog-data docker compose -p backlog-tracker -f compose.dev.yaml -f compose.dev.sqlite.yaml up -d --force-recreate --wait dev
+```
+
+An existing container keeps its original mounts until recreated. Native SQLite
+and Compose volumes remain separate.
+
+The v2 marker blocks file-mode startup and the older named-only SQLite runtime.
+For rollback, stop all writers and restore the complete coordinated pre-cutover
+backup (database with its sidecars and the full source model directory), then run
+the matching pre-cutover version and mode. Back up the stopped v2 database or
+volume and its sidecars for all current models. Retained source JSON and its Git
+history are pre-cutover backups only. Maintain SQLite file and directory ownership
+for the runtime account (`node` in Docker, your own account in native mode).
+
 ## API and implementation
 
 The npm workspaces are `apps/web` (React + TypeScript + Vite) and `apps/api`
@@ -564,9 +664,44 @@ One root lockfile manages both workspaces.
 
 JSON endpoints under `/api`:
 
+- `GET /backend-schema` returns `{sqlite:{userVersion,tables},jsonStorage}` for
+  **General → Backend schema**, a read-only workspace presented as an ERD canvas.
+  SQLite tables render as positioned table nodes connected by their real foreign
+  keys (for example `tasks.projectId → projects.id`). Foreign keys between
+  different tables use straight lines between the relevant rows. Drag from anywhere
+  on a table (mouse or touch, snapped to the 20px grid), or move it with arrow keys
+  when its header is focused (Shift for a larger step). Click or tap the table name,
+  or press Enter/Space on the focused header or name, to open the details dock.
+  Table positions are transient: they reset when leaving the page and are never
+  persisted or sent to the API. FK endpoints and actions appear on hover and in
+  the dock, without persistent midpoint labels or cardinality claims.
+  Pan by dragging empty canvas space or using the arrow keys (Shift for a larger
+  step). The canvas supports clamped zoom (25%–200%), reset view (pan/zoom only),
+  a grid toggle, and focus reveal of the selected node. Selecting a table node or a
+  relationship opens a read-only details dock with full fields (declared type,
+  explicit `NOT NULL` separate from primary-key position, defaults), foreign-key
+  actions including `ON DELETE CASCADE`, indexes (origin/unique/partial/expression
+  columns), and expandable exact table/index DDL. A separate **JSON storage**
+  control opens a dock section for the JSON summaries; JSON storage is not drawn as
+  relational tables or foreign-key edges. There are no editing controls and no
+  saved-model writes. SQLite metadata comes from
+  the open application's `sqlite_schema` and `PRAGMA user_version`, `table_info`,
+  `foreign_key_list`, `index_list` and `index_info`. Tables include exact `ddl`,
+  column declared types, explicit `notNull`, `primaryKeyPosition`, `defaultSql`,
+  foreign-key actions and indexes (including automatic primary-key indexes with
+  null DDL). `notNull` reports the pragma flag independently of primary-key status:
+  SQLite's current `TEXT PRIMARY KEY` does not declare `NOT NULL`. Exact expandable
+  DDL is the canonical evidence for CHECK constraints, without SQL parsing or
+  invented UUID/date constraints. JSON storage summaries describe graph schema 3
+   and PostgreSQL ERD schema 1 structurally. In SQLite mode they identify all
+   models as SQLite documents, and live metadata includes all model tables. The
+   validators and sections below remain
+  authoritative. No rows, counts, filesystem paths or saved model contents are
+  returned, and reads perform no writes or DDL execution. The route accepts GET
+  only, ignores query parameters, and retains localhost guards and `no-store`.
 - `GET /projects`, `POST /projects` with `{name}`.
 - `PATCH /projects/:id` with `{name}`, `DELETE /projects/:id` (cascades tasks).
-- `GET /tasks`, `POST /tasks` with `{projectId,title,description?,priority?,dueDate?,status?}`.
+- `GET /tasks`, `POST /tasks` with `{projectId,title,description?,priority?,dueDate?,dueTime?,status?}`.
 - `PATCH /tasks/:id` with any of those task fields; `DELETE /tasks/:id`.
 - `GET /model` returns `{model:{schemaVersion:3,revision,nodes,relationshipTypes,relationships,constraints,indexes}}`.
 - `PUT /model` accepts `{expectedRevision,model}` with a schema-1, schema-2 or schema-3 graph
@@ -578,11 +713,11 @@ JSON endpoints under `/api`:
   deterministic UTF-16 code-unit ordering. Available entries are
   `{id,name,revision,available:true,deletable:boolean}`; unavailable entries are
   `{id,name,available:false,error,deletable:false}`. `deletable` is true only for a
-  supported, read-valid physical regular file; it does not guarantee directory
-  permission to unlink it. Only physically present supported entries are listed;
-  a missing singleton is omitted, with no directory or file creation. A physical
-  legacy entry is named `Legacy model`; corrupt, unreadable or nonregular legacy
-  entries are unavailable. UUID model names remain user-authored, including
+   supported, read-valid saved model; in file mode it does not guarantee directory
+   permission to unlink it. Only stored supported entries are listed;
+   a missing singleton is omitted without creating storage. A stored legacy
+   entry is named `Legacy model`; invalid or unreadable entries are unavailable.
+   SQLite mode lists only the database contents. UUID model names remain user-authored, including
   `Default model`. No query parameter is needed for this stored-only list.
 - `GET /models/legacy` returns `{id:'legacy',name:'Legacy model',model}`. A missing
   singleton still returns an empty revision-0 model for compatibility, without
@@ -601,15 +736,17 @@ JSON endpoints under `/api`:
 - `DELETE /models/:id` accepts exactly `{expectedRevision}` as JSON, where `id`
   is an exact lowercase UUIDv4 or `legacy`, and returns HTTP 204 with no body.
   The expected revision must be a nonnegative safe integer. Invalid bodies or
-  media types return 400; host/origin protections return 403; missing physical
-  files return 404; stale revisions return 409. Corrupt, unreadable, unsupported
+   media types return 400; host/origin protections return 403; missing saved
+   entries return 404; stale revisions return 409. Corrupt, unreadable, unsupported
   or nonregular storage and unlink failures return 500 without purging data.
-  Deletion validates current disk contents and compares revisions in the same
+   File deletion validates current disk contents and compares revisions in the same
   per-resolved-path, in-process queue as PUT, then unlinks only that exact file.
-  Symlinks and wrong-case filenames are rejected. No recursive, sibling-file or
-  SQLite deletion occurs. Deleted UUIDs remain missing on subsequent PUT (404).
-  `legacy` targets only the exact configured singleton filename, which must
-  physically exist. After deletion, GET still returns its virtual empty revision-0
+   Symlinks and wrong-case filenames are rejected. In SQLite mode, graph writes
+   check the current revision (when applicable) and new reference targets in the
+   same transaction as the write. Deletion removes only the selected row after
+   checking its revision. Deleted UUIDs remain missing on subsequent PUT (404).
+   `legacy` targets the stored singleton, which must exist. After deletion,
+   GET still returns its virtual empty revision-0
   model and LIST omits `legacy`; that empty model is not stored until an explicit
   `PUT /model` saves it again.
   Cross-process/external filesystem writers are not locked; use a single API
@@ -618,8 +755,8 @@ JSON endpoints under `/api`:
   Available entries are `{id,name,available:true,revision,definitions}`; each
   definition contains schema-3 definition fields except coordinates (`x`, `y`).
   Unavailable entries are `{id,name,available:false,error}` with content-redacted
-  errors. Only supported physical files are included, never the virtual empty
-  legacy model. Reads use at most eight concurrent file readers, with the same
+   errors. Only supported stored graphs are included, never the virtual empty
+   legacy model. File reads use at most eight concurrent readers, with the same
   exact-case, regular-file and symlink protections as the model list. Targets are
   not recursively loaded; missing references do not make a source unavailable.
   Catalog reads always use fresh saved definitions and never change disk contents.
@@ -635,9 +772,10 @@ host/origin/media-type protections. No import endpoints are provided.
 ### Canonical schema 3 and migration
 
 Canonical graph input is `{schemaVersion:3,nodes,relationshipTypes,relationships,constraints,indexes}`.
-Stored files add the server-managed `revision`, and named files add `name`.
-Schema-1/2 requests and files remain accepted. Reads normalize in memory only;
-only an explicit save writes schema 3. Schema 1 defaults absent `kind` to
+Stored documents add the server-managed `revision`, and named documents add `name`.
+Schema-1/2 requests and stored documents remain accepted. Reads normalize in
+memory only; the SQLite import preserves the stored version, and an explicit save
+writes schema 3. Schema 1 defaults absent `kind` to
 `definition`, classification to `Transactional`, draft to `false` and properties
 to `[]`. Schema 2 requires its previous variant fields.
 
@@ -712,7 +850,7 @@ references, to represent cross-model relationships.
 
 New or retargeted references must resolve to a definition at save time. Internal
 targets resolve against the submitted graph, including unsaved definitions;
-external targets resolve against a supported physical saved file. References
+external targets resolve against a supported saved model. References
 cannot target other references. Invalid/unavailable targets return 400, while
 409 remains reserved for source revision conflicts. An existing reference with
 the same local ID, classification and exact target tuple can be retained even if
@@ -752,12 +890,14 @@ rejected. Revisions and expected revisions are nonnegative safe integers.
 ### Catalog, composition, validation and exports
 
 All models describe schema reuse within **one Neo4j database**, not cross-database
-data relationships. `GET /api/model-catalog` returns `{models:[...]}` for physical
+data relationships. `GET /api/model-catalog` returns `{models:[...]}` for
 stored models only. Available entries include `id,name,available:true,revision,
 sourceSchemaVersion,definitions,relationshipTypes,constraints,indexes`; definition
 nodes omit coordinates, and relationship types include owned definitions only.
-Unavailable entries retain redacted errors. Both catalogs use at most eight
-concurrent readers, retain exact-case/nonregular/symlink safeguards, and never write.
+Unavailable entries retain redacted errors. `sourceSchemaVersion` reflects the
+stored graph version, including after import. In file mode, both catalogs use at
+most eight concurrent readers and retain exact-case/nonregular/symlink safeguards.
+Catalog reads never write.
 
 `POST /api/model-validation` accepts `{modelId,model,excludeDrafts?:boolean}`.
 The model is an unsaved candidate without revision or model name; `modelId` is
@@ -846,12 +986,26 @@ Unit/static syntax checks are not proof of execution against a Neo4j engine.
 Project/task lists return `{projects}` or `{tasks}`, writes return `{project}` or `{task}`,
 creates return HTTP 201, and deletes return HTTP 204. Errors are `{error: string}`
 with meaningful 400/404 responses. Project/task IDs are UUIDs; timestamps are UTC ISO strings.
-Task defaults: empty description, `medium` priority, `null` due date, and `backlog`
-status. Due dates are calendar dates in `YYYY-MM-DD` format (years 0001–9999).
+Task defaults: empty description, `medium` priority, `null` due date and time, and
+`backlog` status. `dueDate` is `null` or a calendar date in `YYYY-MM-DD` format
+(years 0001–9999). `dueTime` is `null` or a 24-hour local wall time `HH:mm`
+(`00:00`–`23:59`, with no seconds or time zone). A non-null time requires an
+effective due date. In PATCH, omitting `dueTime` preserves it unless the date
+is removed; explicitly setting `dueTime: null` clears it. Sending a non-null
+time with no effective date returns 400 without changing the task.
+
+The board displays due times in the browser's locale and compares them to the
+browser's current local date and time at minute boundaries while open. During
+daylight-saving fall-back, a timed task can briefly stop being overdue if the
+clock moves back before its due time; it becomes overdue again when the clock
+reaches that time a second time. Date-only tasks become overdue the following
+local day. Done tasks are never overdue.
 Names/titles must be nonblank, with maximum lengths of 100/200 characters;
 descriptions allow up to 5000 characters. Unknown fields and invalid types are
 rejected. SQL uses parameters and project deletion is an atomic transaction with
-foreign-key cascading. Schema version 1 is initialized on a fresh database.
+foreign-key cascading. On startup, SQLite schema version 1 migrates to version 2
+under a write lock in one transaction, preserving existing data and adding a
+nullable `dueTime` column. Fresh databases use the same version 2 schema.
 
 Mutation requests require JSON where a body is expected. Requests with a foreign
 `Origin` or cross-site fetch metadata are rejected, and only loopback hostnames
@@ -861,7 +1015,7 @@ are accepted. Vite must preserve the incoming `Host` header when proxying.
 
 This is a single-user, local-only app: no authentication, synchronization,
 collaboration, recurring tasks, attachments, or undo. Anyone who can use your
-machine/browser can access its data. Dates have no time-of-day or reminders.
+machine/browser can access its data. Due dates and times do not send reminders.
 All tasks are loaded for client-side search/filtering; large-scale backlogs and
 simultaneous multi-user editing are outside the MVP scope. Deletions are permanent
 unless restored from a backup. Remote/network hosting and HTTPS are not supported.
@@ -884,7 +1038,7 @@ Unicode, and have a 63 UTF-8 byte limit. Coordinates are finite numbers in
 `[0,20000]`; limits are 100 tables, 100 columns per table and 500 foreign keys.
 
 - `GET /api/erd-models` returns `{models:[...]}`. Available summaries are exactly
-  `{id,name,available:true,revision}`; unavailable files use
+  `{id,name,available:true,revision}`; unavailable entries use
   `{id,name,available:false,error}` with the ID as fallback name.
 - `POST /api/erd-models` accepts `{name,model}`, returning HTTP 201
   `{id,name,model}` with nested server-managed `revision:1`.
@@ -892,7 +1046,7 @@ Unicode, and have a 63 UTF-8 byte limit. Coordinates are finite numbers in
 - `PUT /api/erd-models/:uuid` accepts `{name,expectedRevision,model}` and returns
   HTTP 200 with the incremented revision. `DELETE` accepts `{expectedRevision}`
   and returns HTTP 204. Stale revisions return 409, missing models 404, malformed
-  requests 400, and invalid/unreadable/unwritable saved files 500, using `{error}`.
+  requests 400, and invalid/unreadable/unwritable storage 500, using `{error}`.
 - `POST /api/erd-export` accepts `{model}` and returns
   `{filename:'schema.sql',mediaType:'application/sql',content}`. Empty models and
   tables without columns can be saved as drafts, but export returns an actionable
@@ -910,13 +1064,15 @@ Generated PK/UNIQUE constraint names avoid table and foreign-key names; foreign
 keys are added after all tables exist. No defaults, composite keys, imports,
 database connections or SQL execution are provided.
 
-Explicit saves write `erd-<uuid>.json` beside `BACKLOG_MODEL_PATH`, outside graph
+In file mode, explicit saves write `erd-<uuid>.json` beside `BACKLOG_MODEL_PATH`, outside graph
 collection discovery. Creation uses restrictive permissions; atomic replacements
 preserve ordinary file modes. Corrupt, unsupported, symlink and nonregular entries
 cannot be overwritten or deleted through these routes. Per-path in-process
 serialization supports optimistic revisions across app instances in one process;
-deployment requires a single writer, with no external file replacement during
-mutations. Names are trimmed, nonblank text of at most 100 Unicode code points
+file-mode deployment requires a single writer, with no external file replacement
+during mutations. In SQLite mode, ERD writes and revision checks use the same
+SQLite transaction, in their own table separate from graphs. Names are trimmed,
+nonblank text of at most 100 Unicode code points
 without controls. Create/update/export requests allow at most 2 MiB; deletion
 retains the ordinary body limit. Existing localhost, origin and JSON media-type
 protections apply. Export uses the submitted candidate without writing files.

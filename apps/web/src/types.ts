@@ -8,11 +8,12 @@ export interface Task {
   description: string;
   priority: Priority;
   dueDate: string | null;
+  dueTime: string | null;
   status: Status;
   createdAt: string;
   updatedAt: string;
 }
-export type TaskInput = Pick<Task, 'projectId' | 'title' | 'description' | 'priority' | 'dueDate' | 'status'>;
+export type TaskInput = Pick<Task, 'projectId' | 'title' | 'description' | 'priority' | 'dueDate' | 'status'> & Partial<Pick<Task, 'dueTime'>>;
 export const statuses: { value: Status; label: string; description: string }[] = [
   { value: 'backlog', label: 'Backlog', description: 'Ideas and next steps' },
   { value: 'in_progress', label: 'In progress', description: 'What’s moving forward' },

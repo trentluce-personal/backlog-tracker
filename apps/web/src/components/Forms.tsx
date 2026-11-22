@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { api } from '../api';
-import { priorities, statuses, type Project, type Task, type TaskInput } from '../types';
+import { priorities, statuses, type Project, type Status, type Task, type TaskInput } from '../types';
 import { Dialog } from './Dialog';
 
 function message(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong. Please try again.'; }
@@ -54,24 +54,35 @@ export function ProjectForm({ project, onClose, onSave, onDelete }: {
   </Dialog>;
 }
 
-export function TaskForm({ task, projects, initialProjectId, onClose, onSave, onDelete }: {
-  task?: Task; projects: Project[]; initialProjectId: string; onClose: () => void;
+export function TaskForm({ task, projects, initialProjectId, initialStatus = 'backlog', onClose, onSave, onDelete }: {
+  task?: Task; projects: Project[]; initialProjectId: string; initialStatus?: Status; onClose: () => void;
   onSave: (task: Task) => void; onDelete: () => void;
 }) {
-  const initial = useRef<TaskInput>({
+  const initial = useRef<Required<TaskInput>>({
     projectId: task?.projectId ?? initialProjectId,
     title: task?.title ?? '', description: task?.description ?? '',
-    priority: task?.priority ?? 'medium', dueDate: task?.dueDate ?? null, status: task?.status ?? 'backlog',
+    priority: task?.priority ?? 'medium', dueDate: task?.dueDate ?? null, status: task?.status ?? initialStatus,
+    dueTime: task?.dueTime ?? null,
   }).current;
   const [draft, setDraft] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [fieldError, setFieldError] = useState('');
+  const [incompleteDueTime, setIncompleteDueTime] = useState(false);
+  const [dueTimeError, setDueTimeError] = useState(false);
   const pending = useRef(false);
   const submitRef = useRef<HTMLButtonElement>(null);
+  const dueTimeRef = useRef<HTMLInputElement>(null);
   useBusyFocus(busy, submitRef);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
-  function field<K extends keyof TaskInput>(key: K, value: TaskInput[K]) { setDraft(current => ({ ...current, [key]: value })); }
+  const dirty = incompleteDueTime || JSON.stringify(draft) !== JSON.stringify(initial);
+  function field<K extends keyof TaskInput>(key: K, value: Required<TaskInput>[K]) { setDraft(current => ({ ...current, [key]: value })); }
+  function changeDueDate(dueDate: string | null) {
+    setDraft(current => ({ ...current, dueDate, dueTime: dueDate ? current.dueTime : null }));
+    if (!dueDate) {
+      setIncompleteDueTime(false);
+      setDueTimeError(false);
+    }
+  }
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (pending.current) return;
@@ -80,8 +91,18 @@ export function TaskForm({ task, projects, initialProjectId, onClose, onSave, on
       document.getElementById('task-title')?.focus();
       return;
     }
+    const dueTimeInput = dueTimeRef.current;
+    if (draft.dueDate && dueTimeInput?.validity.badInput) {
+      setDueTimeError(true);
+      dueTimeInput.focus();
+      return;
+    }
     pending.current = true; setBusy(true); setError('');
-    try { onSave((await api.saveTask({ ...draft, title: draft.title.trim() }, task?.id)).task); }
+    try {
+      const { dueTime, ...fields } = draft;
+      const input = { ...fields, title: fields.title.trim(), ...(dueTime !== initial.dueTime ? { dueTime } : {}) };
+      onSave((await api.saveTask(input, task?.id)).task);
+    }
     catch (error) { setError(message(error)); }
     finally { pending.current = false; setBusy(false); }
   }
@@ -91,10 +112,24 @@ export function TaskForm({ task, projects, initialProjectId, onClose, onSave, on
         <div><label htmlFor="task-title">Task title</label><input id="task-title" name="title" data-dialog-initial-focus required maxLength={200} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? 'task-title-error' : undefined} value={draft.title} onChange={event => { field('title', event.target.value); setFieldError(''); }} placeholder="What would you like to do?" /></div>
         <div><label htmlFor="task-project">Project</label><select id="task-project" name="projectId" required value={draft.projectId} onChange={event => field('projectId', event.target.value)}>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
         <div><label htmlFor="task-description">Description <span className="label-hint">optional</span></label><textarea id="task-description" name="description" maxLength={5000} rows={4} value={draft.description} onChange={event => field('description', event.target.value)} placeholder="Notes, context, or a useful starting point…" /></div>
-        <div className="form-grid">
+         <div className="form-grid task-form-grid">
           <div><label htmlFor="task-priority">Priority</label><select id="task-priority" name="priority" value={draft.priority} onChange={event => field('priority', event.target.value as Task['priority'])}>{priorities.map(priority => <option key={priority} value={priority}>{priority[0].toUpperCase() + priority.slice(1)}</option>)}</select></div>
           <div><label htmlFor="task-status">Status</label><select id="task-status" name="status" value={draft.status} onChange={event => field('status', event.target.value as Task['status'])}>{statuses.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}</select></div>
-          <div><label htmlFor="task-due">Due date <span className="label-hint">optional</span></label><input id="task-due" type="date" name="dueDate" min="0001-01-01" max="9999-12-31" value={draft.dueDate ?? ''} onChange={event => field('dueDate', event.target.value || null)} /></div>
+           <div><label htmlFor="task-due">Due date <span className="label-hint">optional</span></label><input id="task-due" type="date" name="dueDate" min="0001-01-01" max="9999-12-31" value={draft.dueDate ?? ''} onChange={event => changeDueDate(event.target.value || null)} /></div>
+           <div>
+             <label htmlFor="task-due-time">Due time <span className="label-hint">optional</span></label>
+             {/* Remount when removing the date to discard any native segments that aren't in the draft. */}
+             <input key={draft.dueDate ? 'dated' : 'undated'} ref={dueTimeRef} id="task-due-time" type="time" name="dueTime" disabled={!draft.dueDate} value={draft.dueTime ?? ''}
+               aria-invalid={dueTimeError ? true : undefined} aria-describedby={dueTimeError ? 'task-due-time-error' : undefined}
+               onInput={event => {
+                 const { badInput } = event.currentTarget.validity;
+                 setIncompleteDueTime(badInput);
+                 if (!badInput) setDueTimeError(false);
+               }}
+               onChange={event => field('dueTime', event.target.value || null)}
+               onBlur={event => setDueTimeError(event.currentTarget.validity.badInput)} />
+             {dueTimeError && <p className="form-error task-due-time-error" role="alert" id="task-due-time-error">Enter a complete time or clear the time.</p>}
+           </div>
         </div>
       </fieldset>
       {fieldError && <p className="form-error" role="alert" id="task-title-error">{fieldError}</p>}

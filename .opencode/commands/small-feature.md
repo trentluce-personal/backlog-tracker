@@ -24,8 +24,10 @@ Include inspection of an adjacent/approved reference before editing when relevan
 use of existing tokens and components, and the complete running-browser loop:
 DOM-driven interaction, screenshots actually read as images for appearance,
 changed controls at applicable desktop/mobile sizes and both themes, keyboard/focus
-and console/failed-request checks, then repair and recheck. Require isolated
-SQLite/model paths for browser mutations; a fresh browser profile is not data
-isolation. Scale checks for genuinely low-risk or text-only edits, but never call
-a build, an unread screenshot, or a DOM snapshot alone visual verification.
+and console/failed-request checks, then repair and recheck. Require
+[Browser verification](../../README.md#browser-verification): use only the
+user's already-running app at its actual URL, with nonpersisting interactions.
+Report missing prerequisites and write-dependent scenarios as blocked; never
+launch a review target. Scale checks for genuinely low-risk or text-only edits,
+but never call a build, an unread screenshot, or a DOM snapshot alone visual verification.
 Report the result and any verification gaps.

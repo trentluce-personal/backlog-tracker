@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, CircleAlert, Columns3, FolderOpen, GitFork, LayoutDashboard, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Search, Table2 } from 'lucide-react';
+import { CircleAlert, Columns3, Database, FolderOpen, GitFork, LayoutDashboard, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Search, Table2 } from 'lucide-react';
 import { Icon } from './components/Icon';
 import { api } from './api';
 import { DeleteConfirmation, ProjectForm, TaskForm } from './components/Forms';
 import { TaskBoard } from './components/TaskBoard';
+import { ProjectPicker } from './components/ProjectPicker';
 import { AppearanceControls } from './components/AppearanceControls';
 import { DataModeling, type ModelNavigation } from './components/DataModeling';
 import { Models } from './components/Models';
 import { ErDesigner, type ErNavigation } from './components/erd/ErDesigner';
+import { BackendSchema } from './components/BackendSchema';
 import { useModelPersistence } from './components/useModelPersistence';
 import { useButtonRipples } from './ripple';
 import { priorities, statuses, type Priority, type Project, type Status, type Task } from './types';
 
-type Editor = { kind: 'project'; project?: Project } | { kind: 'task'; task?: Task } | null;
+type Editor = { kind: 'project'; project?: Project } | { kind: 'task'; task: Task; initialStatus?: never } | { kind: 'task'; task?: never; initialStatus: Status } | null;
 type Deletion = { kind: 'project'; project: Project } | { kind: 'task'; task: Task } | null;
 
 export function App() {
@@ -24,7 +26,7 @@ export function App() {
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [countAnnouncement, setCountAnnouncement] = useState('');
-  const [workspace, setWorkspace] = useState<'backlog' | 'data-modeling' | 'erd'>('backlog');
+  const [workspace, setWorkspace] = useState<'backlog' | 'data-modeling' | 'erd' | 'backend-schema'>('backlog');
   const [navigationCollapsed, setNavigationCollapsed] = useState(false);
   const modelPersistence = useModelPersistence();
   const modelNavigation = useRef<ModelNavigation | null>(null);
@@ -113,11 +115,13 @@ export function App() {
   }
   async function moveTask(task: Task, nextStatus: Status) {
     if (moving.current.has(task.id)) return;
-    const source = document.getElementById(`status-${task.id}`);
     moving.current.add(task.id); setPendingIds(new Set(moving.current)); setActionError(''); setNotice('');
     try {
       const result = await api.moveTask(task.id, nextStatus);
-      if (source && document.activeElement === source) moveFocus.current = { id: source.id, source };
+      const source = document.activeElement;
+      if (source instanceof HTMLElement && (source.id === `status-${task.id}` || source.id === `task-disclosure-${task.id}`)) {
+        moveFocus.current = { id: source.id, source };
+      }
       setTasks(current => current.map(item => item.id === task.id ? result.task : item));
       setNotice(`Task moved to ${statuses.find(item => item.value === nextStatus)?.label.toLowerCase()}.`);
     } catch (error) { setActionError(error instanceof Error ? error.message : 'Could not move this task. Please try again.'); }
@@ -156,24 +160,31 @@ export function App() {
                 <li><button className={`nav-item ${workspace === 'erd' ? 'active' : ''}`} aria-label="ERD" title="ERD" aria-current={workspace === 'erd' ? 'true' : undefined} disabled={navBusy} onClick={() => navigateWorkspace('erd')}><Icon icon={Table2} /><span>ERD</span></button></li>
               </ul>
             </li>
+            <li><button className={`nav-item ${workspace === 'backend-schema' ? 'active' : ''}`} aria-label="Backend schema" title="Backend schema" aria-current={workspace === 'backend-schema' ? 'true' : undefined} disabled={navBusy} onClick={() => navigateWorkspace('backend-schema')}><Icon icon={Database} /><span>Backend schema</span></button></li>
           </ul>
         </nav>
         <button className="icon-button navigation-toggle" aria-label={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!navigationCollapsed} aria-controls="workspace-navigation" disabled={navBusy} onClick={() => { if (modelNavigation.current?.canNavigate() && erNavigation.current?.canNavigate()) setNavigationCollapsed(value => !value); }}><Icon icon={navigationCollapsed ? PanelLeftOpen : PanelLeftClose} /></button>
       </aside>
       <main id="main" tabIndex={-1} className={`workspace${workspace !== 'backlog' ? ' workspace-modeling' : ''}`}>
         <div hidden={workspace !== 'backlog'}>
-        <header className="workspace-header"><div><p className="eyebrow">A LITTLE CLARITY, EVERY DAY</p><h1 id="workspace-title" tabIndex={-1}>{selectedProject?.name ?? 'Backlog'}</h1><p className="workspace-subtitle">{selectedProject ? 'Your ideas, next steps, and small wins. All in one place.' : 'Big ideas. Small steps. A little more room to focus.'}</p></div><button className="button primary new-task" disabled={loading || Boolean(loadError)} onClick={() => openEditor(projects.length ? { kind: 'task' } : { kind: 'project' })}><Icon icon={Plus} /> {projects.length ? 'New task' : 'Create project'}</button></header>
+        <header className="workspace-header">
+          <div className="backlog-heading">
+            <p className="eyebrow">A LITTLE CLARITY, EVERY DAY</p>
+            <div className="backlog-title">
+              <h1 id="workspace-title" tabIndex={-1}>Backlog:</h1>
+              <ProjectPicker projects={projects} selectedProject={selectedProject} disabled={loading || Boolean(loadError)} onSelect={setProjectId} onNew={() => openEditor({ kind: 'project' })} />
+            </div>
+          </div>
+        </header>
         <div className="workspace-summary"><span><strong>{scopedTasks.filter(task => task.status !== 'done').length}</strong> open tasks</span><span className="summary-divider" /><span><strong>{complete}</strong> completed</span><div className="progress-track" role="progressbar" aria-label="Tasks completed" aria-valuenow={complete} aria-valuemin={0} aria-valuemax={scopedTasks.length || 1}><span style={{ width: `${scopedTasks.length ? complete / scopedTasks.length * 100 : 0}%` }} /></div></div>
         <section className="toolbar" aria-label="Search and filter tasks">
           <div className="search-field"><Icon icon={Search} /><label htmlFor="search" className="sr-only">Search tasks and descriptions</label><input id="search" type="search" placeholder="Search your tasks…" value={search} onChange={event => setSearch(event.target.value)} /></div>
-          <div className="filter-field"><label htmlFor="project-filter">Project</label><select id="project-filter" value={projectId} onChange={event => setProjectId(event.target.value)}><option value="all">All projects</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
           <div className="filter-field"><label htmlFor="status-filter">Status</label><select id="status-filter" value={status} onChange={event => setStatus(event.target.value as Status | 'all')}><option value="all">All statuses</option>{statuses.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div>
           <div className="filter-field"><label htmlFor="priority-filter">Priority</label><select id="priority-filter" value={priority} onChange={event => setPriority(event.target.value as Priority | 'all')}><option value="all">All priorities</option>{priorities.map(item => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select></div>
         </section>
-        <div className="project-actions" role="group" aria-label="Project management">
-          <button className="text-button" disabled={loading || Boolean(loadError)} onClick={() => openEditor({ kind: 'project' })}><Icon icon={Plus} /> New project</button>
-          {selectedProject && <button className="text-button" aria-label={`Edit project: ${selectedProject.name}`} disabled={loading || Boolean(loadError)} onClick={() => openEditor({ kind: 'project', project: selectedProject })}>Edit selected project</button>}
-        </div>
+        {selectedProject && <div className="project-actions" role="group" aria-label="Project management">
+          <button className="text-button" aria-label={`Edit project: ${selectedProject.name}`} disabled={loading || Boolean(loadError)} onClick={() => openEditor({ kind: 'project', project: selectedProject })}>Edit selected project</button>
+        </div>}
         <div className="board-meta"><span>{loading ? 'Your workspace' : `${visibleTasks.length} ${visibleTasks.length === 1 ? 'task' : 'tasks'}${filtered ? ' matching filters' : ' in view'}`}</span>{filtered && <button className="text-button" onClick={clearFilters}>Clear filters</button>}<span className="view-label"><Icon icon={Columns3} /> Board view</span></div>
         <div className="sr-only" role="status">{countAnnouncement}</div>
         <div className="announcement" role="status">{notice}</div>
@@ -181,17 +192,18 @@ export function App() {
         {loading ? <div className="state-panel" role="status"><span className="state-symbol" aria-hidden="true"><Icon icon={LoaderCircle} /></span><h2>Opening your workspace</h2><p>Gathering your projects and next steps…</p></div>
           : loadError ? <div className="state-panel error-state" role="alert"><span className="state-symbol" aria-hidden="true"><Icon icon={CircleAlert} /></span><h2>Let’s reconnect</h2><p>{loadError}</p><button className="button primary" onClick={() => void load()}>Try again</button></div>
           : projects.length === 0 ? <div className="state-panel welcome"><span className="welcome-art" aria-hidden="true"><Icon icon={FolderOpen} /><span><Icon icon={Plus} /></span></span><p className="eyebrow">A FRESH START</p><h2>Good things start with an idea.</h2><p>Give it a home. Create a project, add your first task,<br className="desktop-break" /> and take it one small step at a time.</p><button className="button primary" onClick={() => openEditor({ kind: 'project' })}><Icon icon={Plus} /> Create your first project</button></div>
-          : <><TaskBoard tasks={visibleTasks} projects={projects} pendingIds={pendingIds} onEdit={task => openEditor({ kind: 'task', task })} onMove={(task, status) => void moveTask(task, status)} filtered={filtered} />{!filtered && scopedTasks.length === 0 && <div className="board-nudge"><p>Your project has room to grow.</p><button className="text-button" onClick={() => openEditor({ kind: 'task' })}>Create your first task <Icon icon={ArrowRight} /></button></div>}{filtered && visibleTasks.length === 0 && <div className="board-nudge"><p>No tasks match these filters.</p><button className="text-button" onClick={clearFilters}>Clear filters</button></div>}</>}
+          : <><TaskBoard tasks={visibleTasks} projects={projects} pendingIds={pendingIds} onAdd={initialStatus => openEditor({ kind: 'task', initialStatus })} onEdit={task => openEditor({ kind: 'task', task })} onMove={(task, status) => void moveTask(task, status)} filtered={filtered} />{filtered && visibleTasks.length === 0 && <div className="board-nudge"><p>No tasks match these filters.</p><button className="text-button" onClick={clearFilters}>Clear filters</button></div>}</>}
         <footer className="workspace-footer">A quieter place to get things done.<span>No rush. Just your next step.</span></footer>
         </div>
         <div className="erd-workspace" hidden={workspace !== 'erd'}><ErDesigner active={workspace === 'erd'} navigation={erNavigation} onBlockedChange={setErBlocked} /></div>
+        {workspace === 'backend-schema' && <BackendSchema />}
         <div className="modeling-workspace" hidden={workspace !== 'data-modeling'}><DataModeling active={workspace === 'data-modeling'} browserOpen={modelsOpen} browseButton={modelsTrigger} onBrowse={() => setModelsOpen(value => !value)} dialog={modelDialog} setDialog={setModelDialog} persistence={modelPersistence} navigation={modelNavigation} onSaved={() => setModelsRefresh(value => value + 1)} >
           <Models active={modelsOpen && workspace === 'data-modeling'} refresh={modelsRefresh} currentId={modelPersistence.id} busy={modelPersistence.saving || modelPersistence.creating || modelPersistence.deleting || modelPersistence.phase === 'loading'} deleting={modelPersistence.deleting} openError={modelPersistence.failedLoadId ? modelPersistence.error : ''} onOpen={id => void openModel(id)} onNew={newModel} onDelete={model => modelNavigation.current?.deleteFromBrowser(model) ?? Promise.resolve(false)} />
         </DataModeling></div>
       </main>
     </div>
     {editor?.kind === 'project' && <ProjectForm project={editor.project} onClose={() => setEditor(null)} onSave={savedProject} onDelete={() => editor.project && setDeletion({ kind: 'project', project: editor.project })} />}
-    {editor?.kind === 'task' && <TaskForm task={editor.task} projects={projects} initialProjectId={selectedProject?.id ?? projects[0]?.id ?? ''} onClose={() => setEditor(null)} onSave={savedTask} onDelete={() => editor.task && setDeletion({ kind: 'task', task: editor.task })} />}
+    {editor?.kind === 'task' && <TaskForm task={editor.task} projects={projects} initialProjectId={selectedProject?.id ?? projects[0]?.id ?? ''} initialStatus={editor.initialStatus} onClose={() => setEditor(null)} onSave={savedTask} onDelete={() => editor.task && setDeletion({ kind: 'task', task: editor.task })} />}
     {deletion && <DeleteConfirmation kind={deletion.kind} name={deletion.kind === 'project' ? deletion.project.name : deletion.task.title} taskCount={deletion.kind === 'project' ? tasks.filter(task => task.projectId === deletion.project.id).length : undefined} onClose={() => setDeletion(null)} onConfirm={confirmDelete} />}
   </>;
 }

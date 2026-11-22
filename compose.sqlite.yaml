@@ -1,0 +1,13 @@
+# Select explicitly after the all-model v2 cutover of this volume.
+services:
+  app:
+    environment:
+      BACKLOG_NAMED_MODEL_STORAGE: sqlite
+      BACKLOG_MODEL_PATH: !reset null
+    volumes: !override
+      - backlog-data:/app/data
+
+volumes:
+  backlog-data:
+    external: true
+    name: backlog-tracker_backlog-data

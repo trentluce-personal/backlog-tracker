@@ -23,8 +23,11 @@ completion. Load `feature-dispatch` and follow its proportional workflow. For ap
 features also load `web-feature`. For frontend appearance or interaction work,
 explicitly require every implementation worker to load and apply both `ui-quality`
 and `frontend-review`, inspect an approved adjacent reference, and complete the
-closed browser repair loop; loading them only as dispatcher or reviewer is
-insufficient.
+closed browser repair loop under [Browser verification](../../README.md#browser-verification).
+Loading them only as dispatcher or reviewer is insufficient. Require workers to
+use only the user's already-running app at its actual URL, with nonpersisting
+interactions. Ask the owner for startup or URL information as needed; report any
+remaining missing prerequisites and write-dependent scenarios as blocked.
 Use `verification` to select checks and assess acceptance-linked worker evidence;
 route failures to workers using `regression-debugging`. These skills do not grant
 execution or edit permissions. Reuse evidence that still covers the integrated result.

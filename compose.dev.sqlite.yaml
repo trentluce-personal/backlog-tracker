@@ -1,0 +1,20 @@
+# Select explicitly after the all-model v2 cutover of this volume.
+services:
+  dev:
+    environment:
+      BACKLOG_NAMED_MODEL_STORAGE: sqlite
+      BACKLOG_MODEL_PATH: !reset null
+    volumes: !override
+      - backlog-data:/app/data
+      - ./apps/api/src:/app/apps/api/src:ro
+      - ./apps/web:/source/web:ro
+      - ./apps/web/src:/app/apps/web/src:ro
+      - ./apps/web/index.html:/app/apps/web/index.html:ro
+      - ./apps/web/vite.config.ts:/app/apps/web/vite.config.ts:ro
+      - ./apps/web/tsconfig.json:/app/apps/web/tsconfig.json:ro
+      - ./scripts:/app/scripts:ro
+
+volumes:
+  backlog-data:
+    external: true
+    name: backlog-tracker_backlog-data

@@ -16,7 +16,10 @@ diagnostics and fixes; a read-only reviewer supplies reproduction steps only.
 2. **Collect scoped diagnostics.** Read the failing assertion, stack, relevant
    code path, requests, or console output. Capture only what discriminates causes;
    exclude credentials, cookies/tokens, and private project, task, or model data.
-   Use isolated fixtures for mutations and `frontend-review` for browser mechanics.
+   For browser reproduction, follow `frontend-review`: use only the user's
+   already-running app at its actual URL, keep its data read-only, and mark
+   write-dependent scenarios blocked. Use isolated fixtures for automated native
+   tests separately.
 3. **Test a hypothesis.** State a likely cause and choose the smallest check that
    distinguishes it from alternatives. Change one relevant variable at a time.
    For races, inspect ordering, revisions, cancellation, and shared state; use

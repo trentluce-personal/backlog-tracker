@@ -34,7 +34,10 @@ function start(script, database = dbPath) {
   child = spawn(process.execPath, [npm, 'run', script], {
     cwd: root,
     detached: process.platform !== 'win32',
-    env: { ...process.env, PORT: String(apiPort), BACKLOG_WEB_PORT: String(webPort), BACKLOG_DB_PATH: database, BACKLOG_MODEL_PATH: join(directory, 'models', basename(database) + '.json') },
+    env: {
+      ...process.env, PORT: String(apiPort), BACKLOG_WEB_PORT: String(webPort), BACKLOG_DB_PATH: database,
+      BACKLOG_MODEL_PATH: join(directory, 'models', basename(database) + '.json'), BACKLOG_NAMED_MODEL_STORAGE: 'file',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (chunk) => { logs += chunk; });
@@ -90,7 +93,7 @@ async function rejectsStartup(label, database, expectedError) {
   console.log(`PASS ${label}: nonzero exit, frontend never exposed, web port released.`);
 }
 try {
-  const existing = createApp({ dbPath: join(directory, 'server-a.sqlite'), modelPath: join(directory, 'server-a.model.json') });
+  const existing = createApp({ dbPath: join(directory, 'server-a.sqlite'), modelPath: join(directory, 'server-a.model.json'), namedModelStorage: 'file' });
   existing.listen(apiPort, '127.0.0.1');
   await once(existing, 'listening');
   try {

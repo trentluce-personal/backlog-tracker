@@ -35,7 +35,8 @@ and state relevant invariants:
   guards; do not invent remote hosting or user-ownership rules.
 - The default SQLite database and model JSON are separate stores. Native and
   Compose paths differ, while Compose also bind-mounts the repository model
-  directory. Keep verification writes on fresh isolated paths, never live data.
+  directory. Automated native tests write only to their own isolated fixtures;
+  browser verification is read-only.
 - Project deletion permanently cascades to its tasks; confirmation and feedback
   must describe that impact accurately. Failed project/task operations must not
   leave misleading local success state.
@@ -75,13 +76,14 @@ selection, and acceptance-linked evidence. Cover affected domain invariants,
 failure/conflict behavior, and stored-format compatibility where relevant. Use
 `regression-debugging` for failed checks or unexpected behavior.
 
-Frontend appearance/interaction work must close its own browser loop after
-implementation: run the real app; use fresh DOM snapshots for interactions and
-screenshots actually read as images for appearance; exercise changed controls at
-applicable desktop/mobile sizes and both themes; inspect keyboard/focus, console,
-and failed requests; repair observed issues and recheck the same scenarios before
-reporting completion. Use isolated SQLite/model directories and alternate ports
-for every browser mutation—a new browser profile does not isolate server writes.
+For frontend appearance/interaction work, follow
+[Browser verification](../../../README.md#browser-verification) and close the
+browser loop on the user's already-running app at its actual URL. Ask the owner
+to start it or provide the URL as needed, or report the review as blocked. Use
+fresh DOM snapshots for nonpersisting interactions and read non-private screenshots
+as images for appearance. Exercise applicable desktop/mobile sizes and both themes;
+inspect keyboard/focus, console, and failed requests; repair and recheck observed
+issues. Mark write-dependent scenarios as blocked without creating another target.
 Preserve proportionality for genuinely text-only or low-risk edits without treating
 an unread screenshot, successful build, or DOM snapshot alone as visual proof.
 

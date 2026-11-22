@@ -4,6 +4,7 @@ import { link, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promi
 import { basename, dirname, resolve } from 'node:path';
 import { HttpError, object } from './validation.ts';
 import { modelInput, emptyModel, displayName, type ModelInput, type Model, type DefinitionNode } from './model-schema.ts';
+import type { ModelDocuments } from './model-sqlite.ts';
 export * from './model-schema.ts';
 
 export interface NamedModel { id: string; name: string; model: Model }
@@ -22,10 +23,8 @@ function referenceContext(model: ModelInput, id: string) {
   }
 }
 
-async function validateReferences(model: ModelInput, id: string, current: ModelInput | undefined,
-  readTarget: (id: string) => Promise<NamedModel>) {
+function* referenceChecks(model: ModelInput, id: string, current: ModelInput | undefined) {
   referenceContext(model, id);
-  const targets = new Map<string, Promise<NamedModel>>();
   for (const node of [...model.nodes, ...model.relationshipTypes]) {
     if (node.kind !== 'reference') continue;
     const isNode = 'nodeId' in node.target;
@@ -33,19 +32,31 @@ async function validateReferences(model: ModelInput, id: string, current: ModelI
     const previous = [...(current?.nodes ?? []), ...(current?.relationshipTypes ?? [])].find(candidate => candidate.id === node.id);
     if (previous?.kind === 'reference' && previous.classification === node.classification &&
         JSON.stringify(previous.target) === JSON.stringify(node.target)) continue;
-    let target: ModelInput;
-    if (node.classification === 'Internal Reference') target = model;
-    else {
-      let pending = targets.get(node.target.modelId);
-      if (!pending) { pending = readTarget(node.target.modelId); targets.set(node.target.modelId, pending); }
-      try { target = (await pending).model; }
-      catch { throw new HttpError(400, 'Reference target must be an available saved definition.'); }
-    }
-    if (!(isNode ? target.nodes : target.relationshipTypes).some(candidate => candidate.id === targetId && candidate.kind === 'definition')) {
-      throw new HttpError(400, 'Reference target must be an available definition.');
-    }
+    const check = (target: ModelInput) => {
+      if (!(isNode ? target.nodes : target.relationshipTypes).some(candidate => candidate.id === targetId && candidate.kind === 'definition')) {
+        throw new HttpError(400, 'Reference target must be an available definition.');
+      }
+    };
+    if (node.classification === 'Internal Reference') check(model);
+    else yield { modelId: node.target.modelId, check };
   }
 }
+
+async function validateReferences(model: ModelInput, id: string, current: ModelInput | undefined,
+  readTarget: (id: string) => Promise<NamedModel>) {
+  const targets = new Map<string, ModelInput>();
+  for (const { modelId, check } of referenceChecks(model, id, current)) {
+    let target = targets.get(modelId);
+    if (!target) {
+      try { target = (await readTarget(modelId)).model; }
+      catch { throw unavailableTarget(); }
+      targets.set(modelId, target);
+    }
+    check(target);
+  }
+}
+
+const unavailableTarget = () => new HttpError(400, 'Reference target must be an available saved definition.');
 
 async function serialize<T>(path: string, operation: () => Promise<T>): Promise<T> {
   const pending = (saves.get(path) ?? Promise.resolve()).catch(() => {}).then(operation);
@@ -95,16 +106,27 @@ async function writeModel(path: string, model: Model & { name?: string }, create
   }
 }
 
-async function readPhysicalFile(path: string) {
+const readFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+
+export async function readPhysicalFile(path: string, importing = false) {
   let handle;
   try {
     // Require the exact directory entry even on case-insensitive filesystems.
-    if (!(await readdir(dirname(path))).includes(basename(path))) throw new HttpError(404, 'Model not found.');
+    if (!importing && !(await readdir(dirname(path))).includes(basename(path))) throw new HttpError(404, 'Model not found.');
     // lstat distinguishes a dangling symlink from a genuinely missing path.
-    if (!(await lstat(path)).isFile()) throw new Error('Not a regular file.');
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = await lstat(path);
+    if (!before.isFile()) throw new Error('Not a regular file.');
+    handle = await open(path, readFlags);
     const identity = await handle.stat();
     if (!identity.isFile()) throw new Error('Not a regular file.');
+    if (importing) {
+      const unchanged = (after: typeof before) => after.isFile() && after.dev === before.dev && after.ino === before.ino &&
+        after.size === before.size && after.mtimeMs === before.mtimeMs && after.ctimeMs === before.ctimeMs;
+      if (!unchanged(identity) || !unchanged(await lstat(path))) throw new Error('Model file changed.');
+      const bytes = await handle.readFile();
+      if (!unchanged(await handle.stat()) || !unchanged(await lstat(path))) throw new Error('Model file changed.');
+      return { content: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes), identity };
+    }
     return { content: await handle.readFile('utf8'), identity };
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -113,41 +135,10 @@ async function readPhysicalFile(path: string) {
   } finally { await handle?.close(); }
 }
 
-export function openModelStore(modelPath: string) {
-  const path = resolve(modelPath);
-  async function read(): Promise<Model> {
-    let content: string;
-    try { ({ content } = await readPhysicalFile(path)); }
-    catch (error) {
-      if (error instanceof HttpError && error.status === 404) return { ...emptyModel(), revision: 0 };
-      throw error;
-    }
-    try {
-      const value = JSON.parse(content);
-      const model = modelInput(value, true);
-      referenceContext(model, 'legacy');
-      return { ...model, revision: revision(value.revision) };
-    } catch {
-      throw new HttpError(500, 'The model file is invalid or unsupported. Restore a valid backup before saving.');
-    }
-  }
-
+export function openModelStore(modelPath: string, namedStore = openNamedModelStore(modelPath)) {
   return {
-    read,
-    async save(value: unknown): Promise<Model> {
-      const input = object(value, ['expectedRevision', 'model']);
-      const expectedRevision = revision(input.expectedRevision);
-      const model = modelInput(input.model);
-      return serialize(path, async () => {
-        const current = await read();
-        if (current.revision !== expectedRevision) throw new HttpError(409, 'The model has changed. Reload it before saving again.');
-        if (current.revision === Number.MAX_SAFE_INTEGER) throw new HttpError(500, 'The model revision limit has been reached.');
-        await validateReferences(model, 'legacy', current, async id => (await openNamedModelStore(path).readPhysical(id)).entry);
-        const persisted = { ...model, revision: current.revision + 1 };
-        await writeModel(path, persisted);
-        return persisted;
-      });
-    },
+    async read(): Promise<Model> { return (await namedStore.read('legacy')).model; },
+    save: namedStore.saveLegacy,
   };
 }
 
@@ -155,15 +146,44 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 const legacyName = 'Legacy model';
 
 function namedId(value: string): string {
-  if (value.length !== 36 || !uuid.test(value)) throw new HttpError(400, 'Invalid model ID.');
+  if (!graphId(value)) throw new HttpError(400, 'Invalid model ID.');
   return value;
 }
 
+export function graphId(value: string) {
+  return value.length === 36 && uuid.test(value);
+}
+
+export function graphFile(name: string) {
+  return name.endsWith('.json') && graphId(name.slice(0, -5));
+}
+
+export function decodeGraph(id: string, content: string, storage: 'file' | 'SQLite' = 'file') {
+  try {
+    const value = JSON.parse(content);
+    const model = modelInput(value, true, id !== 'legacy');
+    referenceContext(model, id);
+    const name = id === 'legacy' ? legacyName : displayName(value.name);
+    if (id !== 'legacy' && name !== value.name) throw new Error('Stored name must be trimmed.');
+    return { entry: { id, name, model: { ...model, revision: revision(value.revision) } }, sourceSchemaVersion: value.schemaVersion as 1 | 2 | 3 };
+  } catch {
+    throw new HttpError(500, `The model ${storage === 'file' ? 'file' : 'document'} is invalid or unsupported. Restore a valid backup before saving.`);
+  }
+}
+
+function encodeGraph({ id, name, model }: NamedModel) {
+  const value = { ...model, name };
+  modelInput(value, true, true);
+  referenceContext(model, id);
+  return JSON.stringify(value);
+}
+
 // ID injection is internal test support, never exposed by the HTTP API.
-export function openNamedModelStore(modelPath: string, options: { generateId?: () => string } = {}) {
+export function openNamedModelStore(modelPath: string, options: { generateId?: () => string; documents?: ModelDocuments['graphs'] } = {}) {
   const legacyPath = resolve(modelPath);
   const directory = dirname(legacyPath);
   const generateId = options.generateId ?? randomUUID;
+  const sql = options.documents;
 
   function pathFor(id: string) {
     const path = resolve(directory, `${namedId(id)}.json`);
@@ -174,20 +194,39 @@ export function openNamedModelStore(modelPath: string, options: { generateId?: (
   async function readPhysical(id: string) {
     const path = id === 'legacy' ? legacyPath : pathFor(id);
     const { content, identity } = await readPhysicalFile(path);
-    try {
-      const value = JSON.parse(content);
-      const model = modelInput(value, true, id !== 'legacy');
-      referenceContext(model, id);
-      const name = id === 'legacy' ? legacyName : displayName(value.name);
-      if (id !== 'legacy' && name !== value.name) throw new Error('Stored name must be trimmed.');
-      return { entry: { id, name, model: { ...model, revision: revision(value.revision) } }, identity, sourceSchemaVersion: value.schemaVersion as 1 | 2 | 3 };
-    } catch {
-      throw new HttpError(500, 'The model file is invalid or unsupported. Restore a valid backup before saving.');
+    return { ...decodeGraph(id, content), identity };
+  }
+
+  function readSql(id: string) {
+    let content;
+    try { content = id === 'legacy' ? sql!.legacy.read(id) : sql!.named.read(namedId(id)); }
+    catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(500, 'Unable to read SQLite graph storage.');
+    }
+    if (content === undefined) throw new HttpError(404, 'Model not found.');
+    return decodeGraph(id, content, 'SQLite');
+  }
+
+  async function readStored(id: string) {
+    return sql ? readSql(id) : readPhysical(id);
+  }
+
+  function validateSqlReferences(model: ModelInput, id: string, current?: ModelInput) {
+    const targets = new Map<string, ModelInput>();
+    for (const { modelId, check } of referenceChecks(model, id, current)) {
+      let target = targets.get(modelId);
+      if (!target) {
+        try { target = readSql(modelId).entry.model; }
+        catch { throw unavailableTarget(); }
+        targets.set(modelId, target);
+      }
+      check(target);
     }
   }
 
   async function read(id: string): Promise<NamedModel> {
-    try { return (await readPhysical(id)).entry; }
+    try { return (await readStored(id)).entry; }
     catch (error) {
       if (id === 'legacy' && error instanceof HttpError && error.status === 404) {
         return { id, name: legacyName, model: { ...emptyModel(), revision: 0 } };
@@ -198,7 +237,9 @@ export function openNamedModelStore(modelPath: string, options: { generateId?: (
 
   async function physicalIds() {
     let entries: Dirent[];
-    try { entries = await readdir(directory, { withFileTypes: true }); }
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw new HttpError(500, 'Unable to list model files. Check directory permissions.');
@@ -206,14 +247,23 @@ export function openNamedModelStore(modelPath: string, options: { generateId?: (
       entries = [];
     }
     return [...(entries.some(entry => entry.name === basename(legacyPath)) ? ['legacy'] : []),
-      ...entries.filter(entry => entry.isFile() && entry.name.endsWith('.json') &&
-      entry.name.length === 41 && uuid.test(entry.name.slice(0, -5)) && resolve(directory, entry.name) !== legacyPath)
+      ...entries.filter(entry => entry.isFile() && graphFile(entry.name) && resolve(directory, entry.name) !== legacyPath)
       .map(entry => entry.name.slice(0, -5))];
   }
 
   async function catalogEntries() {
-    const ids = await physicalIds();
     const results: ({ available: true; entry: NamedModel; sourceSchemaVersion: 1 | 2 | 3 } | { available: false; id: string; name: string; error: string })[] = [];
+    if (sql) {
+      let rows;
+      try { rows = [...sql.named.list(), ...sql.legacy.list()]; }
+      catch { throw new HttpError(500, 'Unable to list SQLite graph storage.'); }
+      for (const { id, document } of rows) {
+        try { results.push({ available: true, ...decodeGraph(id, document, 'SQLite') }); }
+        catch { results.push({ id, name: id === 'legacy' ? legacyName : id, available: false, error: 'The model document is invalid or unsupported.' }); }
+      }
+      return results;
+    }
+    const ids = await physicalIds();
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(8, ids.length) }, async () => {
       while (next < ids.length) {
@@ -232,7 +282,37 @@ export function openNamedModelStore(modelPath: string, options: { generateId?: (
 
   return {
     read,
-    readPhysical,
+    readPhysical: readStored,
+    readStored,
+    async saveLegacy(value: unknown): Promise<Model> {
+      const input = object(value, ['expectedRevision', 'model']);
+      const expectedRevision = revision(input.expectedRevision);
+      const model = modelInput(input.model);
+      function updated(current: Model) {
+        if (current.revision !== expectedRevision) throw new HttpError(409, 'The model has changed. Reload it before saving again.');
+        if (current.revision === Number.MAX_SAFE_INTEGER) throw new HttpError(500, 'The model revision limit has been reached.');
+        return { ...model, revision: current.revision + 1 };
+      }
+      if (sql) return sql.legacy.write(() => {
+        let saved: Model | undefined;
+        try { saved = readSql('legacy').entry.model; }
+        catch (error) { if (!(error instanceof HttpError && error.status === 404)) throw error; }
+        const current = saved ?? { ...emptyModel(), revision: 0 };
+        const persisted = updated(current);
+        validateSqlReferences(model, 'legacy', current);
+        modelInput(persisted, true);
+        if (saved) sql.legacy.update('legacy', JSON.stringify(persisted));
+        else sql.legacy.insert('legacy', JSON.stringify(persisted));
+        return persisted;
+      });
+      return serialize(legacyPath, async () => {
+        const current = (await read('legacy')).model;
+        const persisted = updated(current);
+        await validateReferences(model, 'legacy', current, async id => (await readPhysical(id)).entry);
+        await writeModel(legacyPath, persisted);
+        return persisted;
+      });
+    },
     async definitions(rich = false) {
       const models = (await catalogEntries()).map(result => {
         if (!result.available) return result;
@@ -251,19 +331,25 @@ export function openNamedModelStore(modelPath: string, options: { generateId?: (
       return models.sort(compareModels);
     },
     async delete(id: string, value: unknown): Promise<void> {
-      const path = id === 'legacy' ? legacyPath : pathFor(id);
+      const sqlDelete = id === 'legacy' ? sql?.legacy : sql?.named;
+      const path = sql ? undefined : id === 'legacy' ? legacyPath : pathFor(id);
+      if (sql && id !== 'legacy') namedId(id);
       const input = object(value, ['expectedRevision']);
       const expectedRevision = revision(input.expectedRevision);
-      return serialize(path, async () => {
+      if (sqlDelete) return sqlDelete.write(() => {
+        if (readSql(id).entry.model.revision !== expectedRevision) throw new HttpError(409, 'The model has changed. Reload it before deleting.');
+        sqlDelete.remove(id);
+      });
+      return serialize(path!, async () => {
         const { entry, identity } = await readPhysical(id);
         if (entry.model.revision !== expectedRevision) throw new HttpError(409, 'The model has changed. Reload it before deleting.');
         try {
           // Reject a replaced/nonregular entry before unlinking. External writers
           // still require an external lock; this queue covers this process only.
-          const current = await lstat(path);
+          const current = await lstat(path!);
           if (!current.isFile() || current.dev !== identity.dev || current.ino !== identity.ino ||
-              !(await readdir(directory)).includes(basename(path))) throw new Error('Model destination changed.');
-          await unlink(path);
+              !(await readdir(directory)).includes(basename(path!))) throw new Error('Model destination changed.');
+          await unlink(path!);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new HttpError(404, 'Model not found.');
           throw new HttpError(500, 'Unable to delete the model file. Check directory permissions.');
@@ -276,15 +362,24 @@ export function openNamedModelStore(modelPath: string, options: { generateId?: (
       const submitted = modelInput(input.model);
       for (let attempt = 0; attempt < 10; attempt++) {
         const id = namedId(generateId());
-        const path = pathFor(id);
+        const path = sql ? undefined : pathFor(id);
         const model: Model = { ...submitted, revision: 1, nodes: submitted.nodes.map(node =>
           node.kind === 'reference' && node.classification === 'Internal Reference'
              ? { ...node, target: { ...node.target, modelId: id } } : node),
           relationshipTypes: submitted.relationshipTypes.map(type => type.kind === 'reference' && type.classification === 'Internal Reference'
             ? { ...type, target: { ...type.target, modelId: id } } : type) };
+        if (sql) {
+          const entry = { id, name, model };
+          const created = sql.named.write(() => {
+            validateSqlReferences(model, id);
+            return sql.named.insert(id, encodeGraph(entry));
+          });
+          if (created) return entry;
+          continue;
+        }
         await validateReferences(model, id, undefined, async targetId => (await readPhysical(targetId)).entry);
         try {
-          await writeModel(path, { ...model, name }, true);
+          await writeModel(path!, { ...model, name }, true);
           return { id, name, model };
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
@@ -293,19 +388,30 @@ export function openNamedModelStore(modelPath: string, options: { generateId?: (
       throw new HttpError(500, 'Unable to allocate a unique model ID. Try saving again.');
     },
     async save(id: string, value: unknown): Promise<NamedModel> {
-      const path = pathFor(id);
+      const path = sql ? undefined : pathFor(id);
+      if (sql) namedId(id);
       const input = object(value, ['expectedRevision', 'name', 'model']);
       const expectedRevision = revision(input.expectedRevision);
       const name = displayName(input.name);
       const model = modelInput(input.model);
-      return serialize(path, async () => {
-        const current = await read(id);
+      function updated(current: NamedModel) {
         if (current.model.revision !== expectedRevision) throw new HttpError(409, 'The model has changed. Reload it before saving again.');
         if (expectedRevision === Number.MAX_SAFE_INTEGER) throw new HttpError(500, 'The model revision limit has been reached.');
+        return { id, name, model: { ...model, revision: expectedRevision + 1 } };
+      }
+      if (sql) return sql.named.write(() => {
+        const current = readSql(id).entry;
+        const entry = updated(current);
+        validateSqlReferences(model, id, current.model);
+        sql.named.update(id, encodeGraph(entry));
+        return entry;
+      });
+      return serialize(path!, async () => {
+        const current = await read(id);
+        const entry = updated(current);
         await validateReferences(model, id, current.model, async targetId => (await readPhysical(targetId)).entry);
-        const persisted = { ...model, revision: expectedRevision + 1 };
-        await writeModel(path, { ...persisted, name }, false, false);
-        return { id, name, model: persisted };
+        await writeModel(path!, { ...entry.model, name }, false, false);
+        return entry;
       });
     },
   };
