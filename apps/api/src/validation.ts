@@ -8,6 +8,12 @@ export class HttpError extends Error {
 
 export type Priority = 'low' | 'medium' | 'high';
 export type Status = 'backlog' | 'in_progress' | 'done';
+export const tagColors = ['slate', 'blue', 'teal', 'gold', 'purple', 'red'] as const;
+export type TagColor = (typeof tagColors)[number];
+export interface TagInput {
+  name: string;
+  color: TagColor;
+}
 export interface TaskInput {
   projectId: string;
   title: string;
@@ -16,6 +22,7 @@ export interface TaskInput {
   dueDate: string | null;
   dueTime: string | null;
   status: Status;
+  tagIds: string[];
 }
 
 export function id(value: unknown): string {
@@ -45,6 +52,15 @@ export function projectInput(value: unknown): string {
   return text(object(value, ['name']).name, 'Name', 100);
 }
 
+export function tagInput(value: unknown, partial = false): Partial<TagInput> {
+  const body = object(value, ['name', 'color']);
+  if (partial && Object.keys(body).length === 0) throw new HttpError(400, 'Provide at least one tag field.');
+  const result: Partial<TagInput> = {};
+  if (!partial || 'name' in body) result.name = text(body.name, 'Name', 50);
+  if (!partial || 'color' in body) result.color = choice(body.color, tagColors, 'color');
+  return result;
+}
+
 function dueDate(value: unknown): string | null {
   if (value === null) return null;
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith('0000')) {
@@ -70,8 +86,13 @@ function dueTime(value: unknown): string | null {
   return value;
 }
 
+function tagIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 50) throw new HttpError(400, 'Tags must be a list of at most 50 tag IDs.');
+  return [...new Set(value.map(id))];
+}
+
 export function taskInput(value: unknown, partial = false): Partial<TaskInput> {
-  const body = object(value, ['projectId', 'title', 'description', 'priority', 'dueDate', 'dueTime', 'status']);
+  const body = object(value, ['projectId', 'title', 'description', 'priority', 'dueDate', 'dueTime', 'status', 'tagIds']);
   if (partial && Object.keys(body).length === 0) throw new HttpError(400, 'Provide at least one task field.');
   const result: Partial<TaskInput> = {};
   if (!partial || 'projectId' in body) result.projectId = id(body.projectId);
@@ -81,5 +102,6 @@ export function taskInput(value: unknown, partial = false): Partial<TaskInput> {
   if ('status' in body) result.status = choice(body.status, ['backlog', 'in_progress', 'done'], 'status');
   if ('dueDate' in body) result.dueDate = dueDate(body.dueDate);
   if ('dueTime' in body) result.dueTime = dueTime(body.dueTime);
+  if ('tagIds' in body) result.tagIds = tagIds(body.tagIds);
   return result;
 }

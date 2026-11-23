@@ -126,7 +126,7 @@ test('fresh dry-run is read-only and apply preserves exact bytes of all model ki
     for (const [table, path] of [['legacy_graph_document', f.modelPath], ['erd_documents', f.file('erd-' + a)]]) {
       assert.deepEqual(Buffer.from(db.prepare(`SELECT CAST(document AS BLOB) AS bytes FROM ${table}`).get()!.bytes as Uint8Array), source.get(path!));
     }
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 2);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
   } finally { db.close(); }
   for (const [path, bytes] of source) assert.deepEqual(await readFile(path), bytes);
   const api = await f.serve('sqlite');
@@ -207,7 +207,7 @@ test('consistent backlog v1 can cut over and migrate dueTime on startup', async 
   const f = await fixture(t);
   {
     using db = new DatabaseSync(f.dbPath);
-    db.exec('ALTER TABLE tasks DROP COLUMN dueTime; PRAGMA user_version = 1');
+    db.exec('DROP TABLE task_tags; DROP TABLE tags; ALTER TABLE tasks DROP COLUMN dueTime; PRAGMA user_version = 1');
   }
   for (const action of ['--dry-run', '--apply'] as const) {
     const result = f.run(action);
@@ -220,7 +220,7 @@ test('consistent backlog v1 can cut over and migrate dueTime on startup', async 
   assert.equal(readVersion(), 1);
   const api = await f.serve('sqlite');
   assert.equal((await api('models')).status, 200);
-  assert.equal(readVersion(), 2);
+  assert.equal(readVersion(), 3);
 });
 
 test('unused index corruption blocks import preflight and the write transaction without changing bytes', async t => {
@@ -372,7 +372,7 @@ test('SQLite HTTP routes share the cutover store for revisions, catalogs, compos
   const table = metadata.body.sqlite.tables.find((row: { name: string }) => row.name === 'named_graph_documents');
   assert.ok(table.indexes.some((index: { origin: string }) => index.origin === 'pk'));
   assert.deepEqual(metadata.body.sqlite.tables.map((row: { name: string }) => row.name),
-    ['erd_documents', 'legacy_graph_document', 'named_graph_cutover', 'named_graph_documents', 'projects', 'tasks']);
+    ['erd_documents', 'legacy_graph_document', 'named_graph_cutover', 'named_graph_documents', 'projects', 'tags', 'task_tags', 'tasks']);
   assert.deepEqual(metadata.body.jsonStorage.map((row: { name: string }) => row.name),
     ['Graph model (named and singleton documents in SQLite)', 'PostgreSQL ERD (SQLite documents)']);
   assert.doesNotMatch(JSON.stringify(metadata.body), /fixture\.sqlite|Imported|ERD fixture/);

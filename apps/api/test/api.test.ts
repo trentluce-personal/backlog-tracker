@@ -76,7 +76,7 @@ test('empty database, project CRUD, defaults, task editing and individual deleti
   const task = result.data.task;
   assert.deepEqual(task, {
     id: task.id, projectId: project.id, title: 'Start tracker', description: '', priority: 'medium',
-    dueDate: null, dueTime: null, status: 'backlog', createdAt: task.createdAt, updatedAt: task.createdAt,
+    dueDate: null, dueTime: null, status: 'backlog', tagIds: [], createdAt: task.createdAt, updatedAt: task.createdAt,
   });
   const second = (await f.request('/api/projects', 'POST', { name: 'Work' })).data.project;
   const changed = await f.request(`/api/tasks/${task.id}`, 'PATCH', {

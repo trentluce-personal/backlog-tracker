@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { api } from '../api';
-import { priorities, statuses, type Project, type Status, type Task, type TaskInput } from '../types';
+import { priorities, statuses, type Project, type Status, type Tag, type TagColor, type Task, type TaskInput } from '../types';
 import { Dialog } from './Dialog';
+import { TagColorPicker } from './TagColorPicker';
 
 function message(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong. Please try again.'; }
 
@@ -54,15 +55,15 @@ export function ProjectForm({ project, onClose, onSave, onDelete }: {
   </Dialog>;
 }
 
-export function TaskForm({ task, projects, initialProjectId, initialStatus = 'backlog', onClose, onSave, onDelete }: {
-  task?: Task; projects: Project[]; initialProjectId: string; initialStatus?: Status; onClose: () => void;
-  onSave: (task: Task) => void; onDelete: () => void;
+export function TaskForm({ task, projects, tags, initialProjectId, initialStatus = 'backlog', onClose, onSave, onTagSaved, onDelete }: {
+  task?: Task; projects: Project[]; tags: Tag[]; initialProjectId: string; initialStatus?: Status; onClose: () => void;
+  onSave: (task: Task) => void; onTagSaved: (tag: Tag) => void; onDelete: () => void;
 }) {
   const initial = useRef<Required<TaskInput>>({
     projectId: task?.projectId ?? initialProjectId,
     title: task?.title ?? '', description: task?.description ?? '',
     priority: task?.priority ?? 'medium', dueDate: task?.dueDate ?? null, status: task?.status ?? initialStatus,
-    dueTime: task?.dueTime ?? null,
+    dueTime: task?.dueTime ?? null, tagIds: task?.tagIds ?? [],
   }).current;
   const [draft, setDraft] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -70,12 +71,34 @@ export function TaskForm({ task, projects, initialProjectId, initialStatus = 'ba
   const [fieldError, setFieldError] = useState('');
   const [incompleteDueTime, setIncompleteDueTime] = useState(false);
   const [dueTimeError, setDueTimeError] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState<TagColor>('slate');
+  const [creatingTag, setCreatingTag] = useState(false);
+  const [tagError, setTagError] = useState('');
   const pending = useRef(false);
   const submitRef = useRef<HTMLButtonElement>(null);
   const dueTimeRef = useRef<HTMLInputElement>(null);
   useBusyFocus(busy, submitRef);
   const dirty = incompleteDueTime || JSON.stringify(draft) !== JSON.stringify(initial);
   function field<K extends keyof TaskInput>(key: K, value: Required<TaskInput>[K]) { setDraft(current => ({ ...current, [key]: value })); }
+  function toggleTag(tagId: string) {
+    setDraft(current => ({
+      ...current,
+      tagIds: current.tagIds.includes(tagId) ? current.tagIds.filter(id => id !== tagId) : [...current.tagIds, tagId],
+    }));
+  }
+  async function createTag() {
+    const name = newTagName.trim();
+    if (!name || creatingTag) return;
+    setCreatingTag(true); setTagError('');
+    try {
+      const { tag } = await api.saveTag(name, newTagColor);
+      onTagSaved(tag);
+      setDraft(current => ({ ...current, tagIds: [...current.tagIds, tag.id] }));
+      setNewTagName('');
+    } catch (error) { setTagError(message(error)); }
+    finally { setCreatingTag(false); }
+  }
   function changeDueDate(dueDate: string | null) {
     setDraft(current => ({ ...current, dueDate, dueTime: dueDate ? current.dueTime : null }));
     if (!dueDate) {
@@ -112,6 +135,20 @@ export function TaskForm({ task, projects, initialProjectId, initialStatus = 'ba
         <div><label htmlFor="task-title">Task title</label><input id="task-title" name="title" data-dialog-initial-focus required maxLength={200} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? 'task-title-error' : undefined} value={draft.title} onChange={event => { field('title', event.target.value); setFieldError(''); }} placeholder="What would you like to do?" /></div>
         <div><label htmlFor="task-project">Project</label><select id="task-project" name="projectId" required value={draft.projectId} onChange={event => field('projectId', event.target.value)}>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
         <div><label htmlFor="task-description">Description <span className="label-hint">optional</span></label><textarea id="task-description" name="description" maxLength={5000} rows={4} value={draft.description} onChange={event => field('description', event.target.value)} placeholder="Notes, context, or a useful starting point…" /></div>
+        <div className="tag-field">
+          <span className="tag-field-label">Tags <span className="label-hint">optional</span></span>
+          <div className="tag-options" role="group" aria-label="Tags">
+            {tags.map(tag => <button type="button" key={tag.id} className={`tag-chip tag-${tag.color}`} aria-pressed={draft.tagIds.includes(tag.id)} onClick={() => toggleTag(tag.id)}>{tag.name}</button>)}
+            {tags.length === 0 && <span className="tag-empty">No tags yet.</span>}
+          </div>
+          <div className="tag-create">
+            <label className="sr-only" htmlFor="new-tag-name">New tag name</label>
+            <input id="new-tag-name" name="newTagName" maxLength={50} placeholder="New tag" value={newTagName} onChange={event => { setNewTagName(event.target.value); setTagError(''); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void createTag(); } }} />
+            <TagColorPicker value={newTagColor} onChange={setNewTagColor} label="New tag color" />
+            <button type="button" className="button secondary tag-create-button" disabled={!newTagName.trim() || creatingTag} onClick={() => void createTag()}>{creatingTag ? 'Adding…' : 'Add tag'}</button>
+          </div>
+          {tagError && <p className="form-error" role="alert">{tagError}</p>}
+        </div>
          <div className="form-grid task-form-grid">
           <div><label htmlFor="task-priority">Priority</label><select id="task-priority" name="priority" value={draft.priority} onChange={event => field('priority', event.target.value as Task['priority'])}>{priorities.map(priority => <option key={priority} value={priority}>{priority[0].toUpperCase() + priority.slice(1)}</option>)}</select></div>
           <div><label htmlFor="task-status">Status</label><select id="task-status" name="status" value={draft.status} onChange={event => field('status', event.target.value as Task['status'])}>{statuses.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}</select></div>
@@ -145,7 +182,7 @@ export function TaskForm({ task, projects, initialProjectId, initialStatus = 'ba
 }
 
 export function DeleteConfirmation({ kind, name, taskCount, onClose, onConfirm }: {
-  kind: 'project' | 'task'; name: string; taskCount?: number; onClose: () => void; onConfirm: () => Promise<void>;
+  kind: 'project' | 'task' | 'tag'; name: string; taskCount?: number; onClose: () => void; onConfirm: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -160,7 +197,7 @@ export function DeleteConfirmation({ kind, name, taskCount, onClose, onConfirm }
     finally { pending.current = false; setBusy(false); }
   }
   return <Dialog title={`Delete this ${kind}?`} onClose={onClose} busy={busy}>
-    <p className="delete-description">“<strong>{name}</strong>” will be permanently deleted.{kind === 'project' && taskCount === 1 && <> Its 1 task will also be deleted.</>}{kind === 'project' && (taskCount ?? 0) > 1 && <> All {taskCount} tasks in this project will also be deleted.</>} This cannot be undone.</p>
+    <p className="delete-description">“<strong>{name}</strong>” will be permanently deleted.{kind === 'project' && taskCount === 1 && <> Its 1 task will also be deleted.</>}{kind === 'project' && (taskCount ?? 0) > 1 && <> All {taskCount} tasks in this project will also be deleted.</>}{kind === 'tag' && taskCount === 1 && <> It will be removed from 1 task.</>}{kind === 'tag' && (taskCount ?? 0) > 1 && <> It will be removed from {taskCount} tasks.</>} This cannot be undone.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="dialog-actions"><div className="action-spacer" /><button className="button secondary" data-dialog-initial-focus disabled={busy} onClick={onClose}>Keep {kind}</button><button ref={deleteRef} className="button danger" aria-disabled={busy} onClick={remove}>{busy ? 'Deleting…' : `Delete ${kind}`}</button></div>
   </Dialog>;

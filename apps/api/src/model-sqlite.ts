@@ -87,7 +87,7 @@ function hasCutover(db: DatabaseSync, schema: ReturnType<typeof modelSchema>, ve
 
 function isBacklogDatabase(db: DatabaseSync) {
   const version = db.prepare('PRAGMA user_version').get()?.user_version;
-  if (version !== 1 && version !== 2) return false;
+  if (version !== 1 && version !== 2 && version !== 3) return false;
   try {
     const tables = db.prepare('PRAGMA main.table_list').all();
     if (!['projects', 'tasks'].every(name => tables.some(table => table.name === name && table.type === 'table'))) return false;
@@ -98,9 +98,15 @@ function isBacklogDatabase(db: DatabaseSync) {
     if (!hasColumns(projects, ['id', 'name', 'createdAt']) ||
         !hasColumns(tasks, ['id', 'projectId', 'title', 'description', 'priority', 'dueDate', 'status', 'createdAt', 'updatedAt'])) return false;
     // Even a generated or differently cased column would collide with the v1 ALTER TABLE.
-    return version === 1
-      ? !tasks.some(column => String(column.name).toLowerCase() === 'duetime')
-      : hasColumns(tasks, ['dueTime']);
+    if (version === 1) return !tasks.some(column => String(column.name).toLowerCase() === 'duetime');
+    if (!hasColumns(tasks, ['dueTime'])) return false;
+    if (version === 3) {
+      if (!['tags', 'task_tags'].every(name => tables.some(table => table.name === name && table.type === 'table'))) return false;
+      const tags = db.prepare('PRAGMA main.table_xinfo(tags)').all();
+      const links = db.prepare('PRAGMA main.table_xinfo(task_tags)').all();
+      if (!hasColumns(tags, ['id', 'name', 'color', 'createdAt']) || !hasColumns(links, ['taskId', 'tagId'])) return false;
+    }
+    return true;
   } catch {
     return false;
   }

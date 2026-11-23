@@ -1,6 +1,9 @@
 export type Status = 'backlog' | 'in_progress' | 'done';
 export type Priority = 'low' | 'medium' | 'high';
+export const tagColors = ['slate', 'blue', 'teal', 'gold', 'purple', 'red'] as const;
+export type TagColor = (typeof tagColors)[number];
 export interface Project { id: string; name: string; createdAt: string }
+export interface Tag { id: string; name: string; color: TagColor; createdAt: string }
 export interface Task {
   id: string;
   projectId: string;
@@ -10,10 +13,11 @@ export interface Task {
   dueDate: string | null;
   dueTime: string | null;
   status: Status;
+  tagIds: string[];
   createdAt: string;
   updatedAt: string;
 }
-export type TaskInput = Pick<Task, 'projectId' | 'title' | 'description' | 'priority' | 'dueDate' | 'status'> & Partial<Pick<Task, 'dueTime'>>;
+export type TaskInput = Pick<Task, 'projectId' | 'title' | 'description' | 'priority' | 'dueDate' | 'status'> & Partial<Pick<Task, 'dueTime' | 'tagIds'>>;
 export const statuses: { value: Status; label: string; description: string }[] = [
   { value: 'backlog', label: 'Backlog', description: 'Ideas and next steps' },
   { value: 'in_progress', label: 'In progress', description: 'What’s moving forward' },

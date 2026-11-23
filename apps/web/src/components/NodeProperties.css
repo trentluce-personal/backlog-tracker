@@ -40,6 +40,9 @@
 .node-property-actions button { display: block; width: 100%; }
 .node-property-actions button + button { margin-top: 8px; }
 .node-properties-add-row td { border-right: 0; }
+.node-properties-empty-row td { border-right: 0; }
+.node-properties-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; color: var(--muted); }
+.node-properties-empty button { display: inline-flex; align-items: center; gap: 6px; }
 .node-property-add-action { position: sticky; right: 0; background: var(--surface); }
 .node-properties .node-property-add-action button,
 .node-properties .node-property-add-action button:is(:hover, :active, :focus) { display: inline-flex; align-items: center; gap: 6px; width: auto; min-width: 44px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--muted); }

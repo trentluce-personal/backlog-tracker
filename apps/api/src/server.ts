@@ -10,7 +10,7 @@ import { exportModel } from './model-export.ts';
 import { ERD_BODY_LIMIT } from './erd-schema.ts';
 import { openErStore } from './erd-store.ts';
 import { exportErModel } from './erd-export.ts';
-import { HttpError, id, projectInput, taskInput } from './validation.ts';
+import { HttpError, id, projectInput, tagInput, type TagInput, taskInput } from './validation.ts';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const mime: Record<string, string> = {
@@ -144,6 +144,19 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
         }
         if (method === 'PUT' && modelId !== 'legacy') {
           return json(response, 200, await namedModelStore.save(modelId, await body(request, MODEL_BODY_LIMIT)));
+        }
+      }
+      if (url.pathname === '/api/tags') {
+        if (method === 'GET') return json(response, 200, { tags: store.tags() });
+        if (method === 'POST') return json(response, 201, { tag: store.createTag(tagInput(await body(request)) as TagInput) });
+      }
+      const tagMatch = /^\/api\/tags\/([^/]+)$/.exec(url.pathname);
+      if (tagMatch) {
+        const tagId = id(tagMatch[1]);
+        if (method === 'PATCH') return json(response, 200, { tag: store.updateTag(tagId, tagInput(await body(request), true)) });
+        if (method === 'DELETE') {
+          store.deleteTag(tagId);
+          return json(response, 204);
         }
       }
       if (url.pathname === '/api/projects') {

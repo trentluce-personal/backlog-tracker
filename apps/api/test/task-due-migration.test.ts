@@ -33,8 +33,9 @@ test('v1 migration preserves rows, indexes and cascade; SQLite enforces canonica
   const migrated = openStore(path);
   try {
     const schema = migrated.backendSchema();
-    assert.equal(schema.userVersion, 2);
+    assert.equal(schema.userVersion, 3);
     assert.ok(schema.tables.find(table => table.name === 'tasks')?.indexes.some(index => index.name === 'tasks_projectId'));
+    assert.deepEqual(schema.tables.filter(table => ['tags', 'task_tags'].includes(table.name)).map(table => table.name), ['tags', 'task_tags']);
     assert.deepEqual(legacy.prepare('SELECT * FROM projects').all(), originalProjects);
     assert.deepEqual(legacy.prepare('SELECT * FROM tasks ORDER BY id').all().map(row => ({ ...row })), originalTasks.map(row => ({ ...row, dueTime: null })));
 

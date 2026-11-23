@@ -218,7 +218,7 @@ test('competing first starts never replace the published v2 DB and use private W
   uri.search = '?immutable=1';
   {
     using db = new DatabaseSync(uri, { readOnly: true });
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 2);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 3);
     assert.equal(db.prepare('SELECT version FROM named_graph_cutover').get()?.version, 2);
     assert.deepEqual(db.prepare('SELECT name FROM projects ORDER BY name').all().map(row => row.name),
       children.map((_, i) => `Starter ${i}`));

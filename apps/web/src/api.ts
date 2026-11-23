@@ -1,4 +1,4 @@
-import type { ModelInput, StoredModel, NamedModel, ModelSummary, ReferenceCatalogModel, Project, Task, TaskInput, ValidationResult, ExportFormat, ModelExport } from './types';
+import type { ModelInput, StoredModel, NamedModel, ModelSummary, ReferenceCatalogModel, Project, Tag, TagColor, Task, TaskInput, ValidationResult, ExportFormat, ModelExport } from './types';
 
 export interface BackendSchemaResponse {
   sqlite: {
@@ -50,6 +50,9 @@ export const api = {
   model: () => request<{ model: StoredModel }>('/model'),
   saveModel: (expectedRevision: number, model: ModelInput) => request<{ model: StoredModel }>('/model', 'PUT', { expectedRevision, model }),
   projects: () => request<{ projects: Project[] }>('/projects'),
+  tags: () => request<{ tags: Tag[] }>('/tags'),
+  saveTag: (name: string, color: TagColor, id?: string) => request<{ tag: Tag }>(id ? `/tags/${id}` : '/tags', id ? 'PATCH' : 'POST', { name, color }),
+  deleteTag: (id: string) => request<void>(`/tags/${id}`, 'DELETE'),
   tasks: () => request<{ tasks: Task[] }>('/tasks'),
   saveProject: (name: string, id?: string) => request<{ project: Project }>(id ? `/projects/${id}` : '/projects', id ? 'PATCH' : 'POST', { name }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, 'DELETE'),

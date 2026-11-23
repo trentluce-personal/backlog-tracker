@@ -37,6 +37,11 @@ export function NodeProperties({ rows, disabled, onRows, onCommit, onAnnounce, t
     control?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [rows]);
   function update(row: PropertyRow, changes: Partial<PropertyRow>) { onRows(rows.map(item => item.id === row.id ? { ...item, ...changes } : item)); }
+  function add() {
+    const id = crypto.randomUUID();
+    focus.current = `${id}-name`;
+    onRows([...rows, { id, value: blank(), committed: null, editing: true, errors: {} }]);
+  }
   function cancel(row: PropertyRow) {
     focus.current = row.committed ? `${row.id}-edit` : 'add';
     onRows(row.committed ? rows.map(item => item.id === row.id ? { ...item, value: item.committed!, editing: false, errors: {} } : item) : rows.filter(item => item.id !== row.id));
@@ -90,7 +95,9 @@ export function NodeProperties({ rows, disabled, onRows, onCommit, onAnnounce, t
             if (target && indexContext) indexContext.setDrafts(current => pruneIndexDrafts(current, target, row.id));
             const next = rows.filter(item => item.id !== row.id); onRows(next); onCommit(next.flatMap(item => item.committed ? [item.committed] : []));
           }}>Remove</button></>}</td></tr>;
-        })}<tr className="node-properties-add-row"><td colSpan={6} /><td className="node-property-actions node-property-add-action"><button type="button" data-property-focus="add" disabled={disabled || rows.length >= 100} onClick={() => { const id = crypto.randomUUID(); focus.current = `${id}-name`; onRows([...rows, { id, value: blank(), committed: null, editing: true, errors: {} }]); }}><Icon icon={Plus} />Add property</button></td></tr></tbody>
+        })}{rows.length === 0
+          ? <tr className="node-properties-empty-row"><td colSpan={7}><div className="node-properties-empty"><span>No properties yet.</span><button type="button" data-property-focus="add" disabled={disabled} onClick={add}><Icon icon={Plus} />Add property</button></div></td></tr>
+          : <tr className="node-properties-add-row"><td colSpan={6} /><td className="node-property-actions node-property-add-action"><button type="button" data-property-focus="add" disabled={disabled || rows.length >= 100} onClick={add}><Icon icon={Plus} />Add property</button></td></tr>}</tbody>
       </table>
     </div>
   </section>;

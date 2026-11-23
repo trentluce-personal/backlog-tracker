@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { statuses, type Project, type Status, type Task } from '../types';
+import { statuses, type Project, type Status, type Tag, type Task } from '../types';
 import { dueLabel, isOverdue, localDueClock } from '../taskDue';
-import { CalendarDays, Check, ChevronDown, Minus, Pencil, Plus } from 'lucide-react';
+import { Check, ChevronDown, Minus, Pencil, Plus } from 'lucide-react';
 import { Icon } from './Icon';
 
 function useDueClock() {
@@ -25,8 +25,8 @@ function useDueClock() {
   return now;
 }
 
-export function TaskBoard({ tasks, projects, pendingIds, onAdd, onEdit, onMove, filtered }: {
-  tasks: Task[]; projects: Project[]; pendingIds: Set<string>;
+export function TaskBoard({ tasks, projects, tags, pendingIds, onAdd, onEdit, onMove, filtered }: {
+  tasks: Task[]; projects: Project[]; tags: Tag[]; pendingIds: Set<string>;
   onAdd: (status: Status) => void; onEdit: (task: Task) => void; onMove: (task: Task, status: Status) => void; filtered: boolean;
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
@@ -55,32 +55,34 @@ export function TaskBoard({ tasks, projects, pendingIds, onAdd, onEdit, onMove, 
         <div className="task-list">
           {columnTasks.map(task => {
             const project = projects.find(project => project.id === task.projectId);
+            const tagList = task.tagIds.map(id => tags.find(tag => tag.id === id)).filter((tag): tag is Tag => Boolean(tag));
             const overdue = isOverdue(task, now);
             const expanded = expandedIds.has(task.id);
             const pending = pendingIds.has(task.id);
             const detailsId = `task-details-${task.id}`;
-            const compactDue = !expanded && task.dueDate;
             const dueId = `task-due-${task.id}`;
             const dueTime = task.dueTime ?? null;
             const deadline = task.dueDate ? (dueTime ? `${task.dueDate}T${dueTime}` : task.dueDate) : undefined;
             const duePrefix = overdue ? 'Overdue · ' : 'Due ';
             const fullDue = task.dueDate ? dueLabel(task.dueDate, dueTime) : '';
             return <article className="task-card" key={task.id} aria-busy={pending}>
-              <h3><button type="button" id={`task-disclosure-${task.id}`} className="task-disclosure" aria-expanded={expanded} aria-controls={detailsId} aria-describedby={compactDue ? dueId : undefined} onClick={() => toggleTask(task.id)}>
+              <h3><button type="button" id={`task-disclosure-${task.id}`} className="task-disclosure" aria-expanded={expanded} aria-controls={detailsId} aria-describedby={task.dueDate ? dueId : undefined} onClick={() => toggleTask(task.id)}>
                 <Icon icon={ChevronDown} />
-                <span className={`task-disclosure-content${compactDue && dueTime ? ' task-disclosure-timed' : ''}`}>
-                  <span className="task-disclosure-summary">
-                    <span className="task-title">{task.title}</span>
-                    {compactDue && <time className={`task-compact-due${overdue ? ' overdue' : ''}`} dateTime={deadline} aria-hidden="true">{overdue && 'Overdue · '}{dueLabel(compactDue, dueTime, true)}</time>}
+                <span className="task-disclosure-content">
+                  <span className="task-row-top">
+                    <span className="task-disclosure-summary">
+                      <span className="task-title">{task.title}</span>
+                      <span className={`priority priority-${task.priority} task-row-priority`}>{task.priority}</span>
+                    </span>
+                    {task.dueDate && <time className={`task-compact-due${overdue ? ' overdue' : ''}`} dateTime={deadline} aria-hidden="true">{overdue && 'Overdue · '}{dueLabel(task.dueDate, dueTime, true)}</time>}
                   </span>
-                  {!expanded && <span className={`priority priority-${task.priority} task-compact-priority`} aria-hidden="true">{task.priority}</span>}
+                  {tagList.length > 0 && <span className="task-tags">{tagList.map(tag => <span key={tag.id} className={`tag-chip tag-${tag.color}`}>{tag.name}</span>)}</span>}
                 </span>
               </button></h3>
-              {compactDue && <span id={dueId} hidden>{duePrefix}{fullDue}</span>}
+              {task.dueDate && <span id={dueId} hidden>{duePrefix}{fullDue}</span>}
               <div className="task-details" id={detailsId} hidden={!expanded}>
-                <div className="card-top"><span className={`priority priority-${task.priority}`}>{task.priority} priority</span><span className="project-tag">{project?.name ?? 'Project'}</span></div>
+                <div className="card-top"><span className="project-tag">{project?.name ?? 'Project'}</span></div>
                 {task.description && <p className="task-description">{task.description}</p>}
-                {deadline && <p className={`due-date ${overdue ? 'overdue' : ''}`}><Icon icon={CalendarDays} /> {duePrefix}<time dateTime={deadline}>{fullDue}</time></p>}
                 <div className="card-footer"><label className="sr-only" htmlFor={`status-${task.id}`}>Status for {task.title}</label><select id={`status-${task.id}`} className="status-select" value={task.status} aria-disabled={pending} onChange={event => { if (!pending) onMove(task, event.target.value as Status); }}>{statuses.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><button className="text-button edit-task" disabled={pending} onClick={() => onEdit(task)} aria-label={`Edit task: ${task.title}`}>Edit <Icon icon={Pencil} /></button></div>
               </div>
             </article>;

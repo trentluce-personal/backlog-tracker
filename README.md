@@ -2,7 +2,8 @@
 
 A local-only personal projects and tasks app. Create projects, add and edit tasks,
 track **Backlog**, **In Progress**, and **Done**, and search/filter your backlog.
-Tasks have descriptions, low/medium/high priority, and optional due dates and times. Your
+Tasks have descriptions, low/medium/high priority, optional due dates and times, and
+color-coded tags you can create, assign, and filter by. Your
 data stays in a local SQLite database and model JSON files; there are no accounts
 or cloud services.
 
@@ -681,7 +682,9 @@ JSON endpoints under `/api`:
   only, ignores query parameters, and retains localhost guards and `no-store`.
 - `GET /projects`, `POST /projects` with `{name}`.
 - `PATCH /projects/:id` with `{name}`, `DELETE /projects/:id` (cascades tasks).
-- `GET /tasks`, `POST /tasks` with `{projectId,title,description?,priority?,dueDate?,dueTime?,status?}`.
+- `GET /tags`, `POST /tags` with `{name,color}`.
+- `PATCH /tags/:id` with `{name?,color?}`, `DELETE /tags/:id` (removes its task assignments).
+- `GET /tasks`, `POST /tasks` with `{projectId,title,description?,priority?,dueDate?,dueTime?,status?,tagIds?}`.
 - `PATCH /tasks/:id` with any of those task fields; `DELETE /tasks/:id`.
 - `GET /model` returns `{model:{schemaVersion:3,revision,nodes,relationshipTypes,relationships,constraints,indexes}}`.
 - `PUT /model` accepts `{expectedRevision,model}` with a schema-1, schema-2 or schema-3 graph
@@ -963,8 +966,8 @@ Compatibility profiles are deferred. Syntax references:
 [graph-type SET](https://neo4j.com/docs/cypher-manual/current/schema/graph-types/set-graph-types/).
 Unit/static syntax checks are not proof of execution against a Neo4j engine.
 
-Project/task lists return `{projects}` or `{tasks}`, writes return `{project}` or `{task}`,
-creates return HTTP 201, and deletes return HTTP 204. Errors are `{error: string}`
+Project/tag/task lists return `{projects}`, `{tags}`, or `{tasks}`, writes return
+`{project}`, `{tag}`, or `{task}`, creates return HTTP 201, and deletes return HTTP 204. Errors are `{error: string}`
 with meaningful 400/404 responses. Project/task IDs are UUIDs; timestamps are UTC ISO strings.
 Task defaults: empty description, `medium` priority, `null` due date and time, and
 `backlog` status. `dueDate` is `null` or a calendar date in `YYYY-MM-DD` format
@@ -974,6 +977,12 @@ effective due date. In PATCH, omitting `dueTime` preserves it unless the date
 is removed; explicitly setting `dueTime: null` clears it. Sending a non-null
 time with no effective date returns 400 without changing the task.
 
+Tags are global, with nonblank names up to 50 characters and case-insensitive
+uniqueness. Colors are one of `slate`, `blue`, `teal`, `gold`, `purple`, or `red`.
+`tagIds` is a list of existing tag IDs (at most 50); duplicate IDs are ignored.
+Omitting `tagIds` in a PATCH preserves the current assignments, while an empty
+list clears them. Deleting a tag removes its assignments but leaves tasks intact.
+
 The board displays due times in the browser's locale and compares them to the
 browser's current local date and time at minute boundaries while open. During
 daylight-saving fall-back, a timed task can briefly stop being overdue if the
@@ -982,10 +991,11 @@ reaches that time a second time. Date-only tasks become overdue the following
 local day. Done tasks are never overdue.
 Names/titles must be nonblank, with maximum lengths of 100/200 characters;
 descriptions allow up to 5000 characters. Unknown fields and invalid types are
-rejected. SQL uses parameters and project deletion is an atomic transaction with
-foreign-key cascading. On startup, SQLite schema version 1 migrates to version 2
-under a write lock in one transaction, preserving existing data and adding a
-nullable `dueTime` column. Fresh databases use the same version 2 schema.
+rejected. SQL uses parameters, and project/task writes with tag assignments are
+atomic transactions with foreign-key cascading. On startup, SQLite schema version 1
+or 2 migrates to version 3 under a write lock in one transaction, preserving
+existing data and adding the nullable `dueTime` column when needed plus the
+`tags` and `task_tags` tables. Fresh databases use the same version 3 schema.
 
 Mutation requests require JSON where a body is expected. Requests with a foreign
 `Origin` or cross-site fetch metadata are rejected, and only loopback hostnames

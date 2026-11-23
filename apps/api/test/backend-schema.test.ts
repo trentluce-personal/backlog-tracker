@@ -49,8 +49,8 @@ test('backend schema matches live SQLite metadata, exact DDL, defaults, keys and
   const data = await response.json() as BackendSchemaResponse;
   assert.deepEqual(Object.keys(data).sort(), ['jsonStorage', 'sqlite']);
   assert.equal(data.sqlite.userVersion, f.db.prepare('PRAGMA user_version').get()!.user_version);
-  assert.equal(data.sqlite.userVersion, 2);
-  assert.deepEqual(data.sqlite.tables.map(table => table.name), ['projects', 'tasks']);
+  assert.equal(data.sqlite.userVersion, 3);
+  assert.deepEqual(data.sqlite.tables.map(table => table.name), ['projects', 'tags', 'task_tags', 'tasks']);
   for (const table of data.sqlite.tables) {
     assert.equal(table.ddl, f.db.prepare('SELECT sql FROM sqlite_schema WHERE name = ?').get(table.name)!.sql);
     assert.deepEqual(table.columns, f.db.prepare(`PRAGMA table_info("${table.name}")`).all().map(c => ({
@@ -69,11 +69,11 @@ test('backend schema matches live SQLite metadata, exact DDL, defaults, keys and
       assert.equal(index.ddl, f.db.prepare('SELECT sql FROM sqlite_schema WHERE name = ?').get(index.name)!.sql);
       assert.deepEqual(index.columns, f.db.prepare(`PRAGMA index_info("${index.name}")`).all().map(c => ({ sequence: c.seqno, position: c.cid, name: c.name })));
     }
-    assert.equal(table.columns[0]!.notNull, false);
+    if (table.name !== 'task_tags') assert.equal(table.columns[0]!.notNull, false);
     assert.equal(table.columns[0]!.primaryKeyPosition, 1);
     assert.equal(table.indexes.find(i => i.origin === 'pk')!.ddl, null);
   }
-  const tasks = data.sqlite.tables[1]!;
+  const tasks = data.sqlite.tables.find(table => table.name === 'tasks')!;
   assert.deepEqual(tasks.columns.map(c => c.name), ['id', 'projectId', 'title', 'description', 'priority', 'dueDate', 'status', 'createdAt', 'updatedAt', 'dueTime']);
   assert.deepEqual(tasks.columns.at(-1), { position: 9, name: 'dueTime', declaredType: 'TEXT', notNull: false, defaultSql: null, primaryKeyPosition: 0 });
   assert.equal(tasks.columns.find(c => c.name === 'description')!.defaultSql, "''");
@@ -82,6 +82,12 @@ test('backend schema matches live SQLite metadata, exact DDL, defaults, keys and
   assert.equal(tasks.foreignKeys[0]!.onDelete, 'CASCADE');
   assert.match(tasks.ddl!, /CHECK \(priority IN/);
   assert.match(tasks.ddl!, /dueTime TEXT CHECK/);
+  const tags = data.sqlite.tables.find(table => table.name === 'tags')!;
+  assert.deepEqual(tags.columns.map(c => c.name), ['id', 'name', 'color', 'createdAt']);
+  assert.equal(tags.indexes.find(index => index.name === 'tags_name_unique')!.unique, true);
+  const links = data.sqlite.tables.find(table => table.name === 'task_tags')!;
+  assert.deepEqual(links.columns.map(c => c.name), ['taskId', 'tagId']);
+  assert.deepEqual(links.foreignKeys.map(key => [key.from, key.table, key.onDelete]).sort(), [['tagId', 'tags', 'CASCADE'], ['taskId', 'tasks', 'CASCADE']].sort());
   assert.deepEqual(data.jsonStorage.map(s => [s.name, s.schemaVersion]), [['Graph model', 3], ['PostgreSQL ERD', 1]]);
 });
 

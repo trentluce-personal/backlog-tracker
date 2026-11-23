@@ -21,7 +21,9 @@ The two broad workspace types deliberately differ:
 
 - **Backlog** is a readable page flow: branded sidebar, project/task summary,
   search/filter toolbar, three status columns, cards, and a footer. Supportive empty
-  states and concise feedback soften the utilitarian structure.
+  states and concise feedback soften the utilitarian structure. Tags use small
+  pill chips that reuse the existing dot/status/error tokens; the tag filter and
+  task-form picker follow the surrounding toolbar and form patterns.
 - **Data Modeling and ERD** are denser, viewport-bound tools: compact headers and
   toolstrips, a pan/zoom canvas, and side sheets/panels for stored models and details.
   They reuse the same palette and controls without forcing the Backlog's card grid
@@ -35,7 +37,7 @@ component library, or arbitrary spacing scale. Extend the nearest existing patte
 | Area | Established pieces | Implementation reference |
 | --- | --- | --- |
 | Application shell/navigation | `.app-shell`, sticky `.sidebar`, `.brand`, `.nav-item`, collapsible 72 px navigation, skip link, appearance controls | [App.tsx](../apps/web/src/App.tsx), [styles.css](../apps/web/src/styles.css) |
-| Backlog | `.workspace`, `.workspace-header`, `.workspace-summary`, `.toolbar`, `.board`, `.column`, `.task-card`, `.state-panel`, `.workspace-footer` | [App.tsx](../apps/web/src/App.tsx), [TaskBoard.tsx](../apps/web/src/components/TaskBoard.tsx), [styles.css](../apps/web/src/styles.css) |
+| Backlog | `.workspace`, `.workspace-header`, `.workspace-summary`, `.toolbar`, `.board`, `.column`, `.task-card`, `.tag-chip`, `.state-panel`, `.workspace-footer` | [App.tsx](../apps/web/src/App.tsx), [TaskBoard.tsx](../apps/web/src/components/TaskBoard.tsx), [TagCollection.tsx](../apps/web/src/components/TagCollection.tsx), [styles.css](../apps/web/src/styles.css) |
 | Shared forms/dialogs | Native `dialog` with `.dialog`, `.dialog-heading`, labeled fields, `.dialog-actions`, `.form-error`, destructive confirmation | [Dialog.tsx](../apps/web/src/components/Dialog.tsx), [Forms.tsx](../apps/web/src/components/Forms.tsx) |
 | Buttons/icons/feedback | `.button`, `.primary`, `.secondary`, `.text-button`, `.icon-button`, `.danger`, `.danger-text`, `.announcement`, `.error-banner` | [styles.css](../apps/web/src/styles.css), [Icon.tsx](../apps/web/src/components/Icon.tsx) |
 | Data Modeling | `.modeling`, `.modeling-stage`, graph canvas and grid, node/edge focus styles, model browser, details sheet, schema panels | [DataModeling.tsx](../apps/web/src/components/DataModeling.tsx), [DataModeling.css](../apps/web/src/components/DataModeling.css), [Models.css](../apps/web/src/components/Models.css) |
