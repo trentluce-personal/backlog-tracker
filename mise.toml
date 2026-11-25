@@ -17,6 +17,10 @@ run = "npm run build"
 description = "Run isolated API integration tests"
 run = "npm test"
 
+[tasks."test:neo4j"]
+description = "Run Neo4j backlog store tests against a disposable container"
+run = "npm run test:neo4j"
+
 [tasks.start]
 description = "Serve the previously built app"
 run = "npm start"
@@ -36,3 +40,15 @@ run = "docker compose down"
 [tasks."docker:logs"]
 description = "Follow container logs"
 run = "docker compose logs --follow --tail 100"
+
+[tasks."ide:up"]
+description = "Build and start the VS Code IDE container"
+run = "docker compose -f compose.ide.yaml up --build -d --wait"
+
+[tasks."ide:down"]
+description = "Stop the VS Code IDE container, preserving its volumes"
+run = "docker compose -f compose.ide.yaml down"
+
+[tasks."ide:logs"]
+description = "Follow VS Code IDE container logs"
+run = "docker compose -f compose.ide.yaml logs --follow --tail 100"

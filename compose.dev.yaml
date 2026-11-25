@@ -11,6 +11,15 @@ services:
       BACKLOG_DB_PATH: /app/data/backlog.sqlite
       BACKLOG_NAMED_MODEL_STORAGE: sqlite
       BACKLOG_DOCKER_DEV: "1"
+      BACKLOG_STORE: neo4j
+      NEO4J_URI: ${NEO4J_URI:-bolt://host.docker.internal:7687}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+      IDE_URL: ${IDE_URL:-http://127.0.0.1:8080}
+      IDE_INTERNAL_URL: ${IDE_INTERNAL_URL:-http://host.docker.internal:8080}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - backlog-data:/app/data
       - ./apps/api/src:/app/apps/api/src:ro

@@ -3,9 +3,9 @@
 A local-only personal projects and tasks app. Create projects, add and edit tasks,
 track **Backlog**, **In Progress**, and **Done**, and search/filter your backlog.
 Tasks have descriptions, low/medium/high priority, optional due dates and times, and
-color-coded tags you can create, assign, and filter by. Your
-data stays in a local SQLite database and model JSON files; there are no accounts
-or cloud services.
+color-coded tags you can create, assign, and filter by. Backlog data lives in a
+local Neo4j database; data-model graphs and PostgreSQL ERDs stay in local SQLite
+and model JSON files. There are no accounts or cloud services.
 
 ## Requirements
 
@@ -13,7 +13,9 @@ or cloud services.
   `mise.toml` pins **24.21.0**; Docker supplies its own Node and npm.
 - A current browser. Windows, macOS, and Linux are supported by the startup scripts.
 - Run commands from the repository root. Node's built-in SQLite module supplies
-  the database; no separate database install is needed.
+  the model database; no separate SQLite install is needed.
+- A reachable Neo4j 5.26 instance for the backlog. See
+  [Backlog storage in Neo4j](#backlog-storage-in-neo4j).
 - Choose native development (optionally managed with mise) or Docker below.
 
 ### mise (recommended for native development)
@@ -51,11 +53,15 @@ resolved volume mapping.
 | `mise run dev` | `npm run dev` |
 | `mise run build` | `npm run build` |
 | `mise run test` | `npm test` |
+| `mise run test:neo4j` | `npm run test:neo4j` |
 | `mise run start` | `npm start` (build first) |
 | `mise run test:startup` | `npm run test:startup` (build first) |
 | `mise run docker:up` | `docker compose up --build -d --wait` |
 | `mise run docker:down` | `docker compose down` |
 | `mise run docker:logs` | `docker compose logs --follow --tail 100` |
+| `mise run ide:up` | `docker compose -f compose.ide.yaml up --build -d --wait` |
+| `mise run ide:down` | `docker compose -f compose.ide.yaml down` |
+| `mise run ide:logs` | `docker compose -f compose.ide.yaml logs --follow --tail 100` |
 
 ## Setup and development (npm alternative)
 
@@ -112,6 +118,98 @@ palettes directly (with button ripples when supported).
 Reduced motion switches themes directly and suppresses ornamental motion. Effects
 never submit forms or delay other actions; unsupported animation APIs fall back to
 ordinary controls.
+
+## Backlog storage in Neo4j
+
+Projects, tasks, and tags live in Neo4j when `BACKLOG_STORE=neo4j` or when
+`NEO4J_URI` is set. Data-model graphs, PostgreSQL ERDs, and backend schema
+metadata stay in SQLite and model JSON. The API applies the backlog uniqueness
+constraints and indexes with `IF NOT EXISTS` before it starts listening, and
+startup fails if Neo4j is selected but unreachable.
+
+Server-side configuration only:
+
+| Variable | Meaning |
+| --- | --- |
+| `BACKLOG_STORE` | `neo4j` or `sqlite`; defaults to `neo4j` when `NEO4J_URI` is set |
+| `NEO4J_URI` | For example `bolt://127.0.0.1:7687` through an SSH tunnel |
+| `NEO4J_USER` | Defaults to `neo4j` |
+| `NEO4J_DATABASE` | Defaults to `neo4j` |
+| `NEO4J_PASSWORD` | Required for Neo4j; keep it in `.env` or the environment, never in Git |
+
+The API loads `.env` from the repository root when present. For native
+development, start the tunnel first, then run the app:
+
+```sh
+ssh -N graph-db-tunnel
+npm run dev
+```
+
+For Compose, set `NEO4J_PASSWORD` in `.env` before starting. The default URI is
+`bolt://host.docker.internal:7687`. On Linux, the tunnel must bind the Docker
+bridge gateway, or the app must use host networking; see the tunnel guide in
+the Workbench Home Neo4j setup.
+
+`npm test` keeps using SQLite so it needs no database service.
+`npm run test:neo4j` starts a disposable Neo4j container and runs the Neo4j
+store tests. Never point tests at production.
+
+Back up the backlog with Neo4j dumps. The SQLite volume still holds model data
+in Compose SQLite mode, but it no longer holds backlog rows when Neo4j is
+selected.
+
+## VS Code workspace
+
+The **VS Code** workspace embeds a real code-server instance running in Docker.
+The IDE image includes OpenCode and the OpenCode VS Code extension, so the
+integrated terminal and extension use the same OpenCode installation.
+
+Start the IDE separately from the Forge:
+
+```sh
+docker compose -f compose.ide.yaml up --build -d --wait
+```
+
+Open the Forge and select **VS Code**. The IDE is iframed from `IDE_URL`
+(default `http://127.0.0.1:8080`) and opens `/workspace`.
+
+The workspace is a **fresh Docker volume**, `forge-ide_workspace-data` by default,
+mounted at `/workspace`. It starts empty and has no access to host files. Clone a
+repository in the IDE terminal or copy files into the volume once:
+
+```sh
+git clone <repository> /workspace/<name>
+```
+
+When the workspace opens, the Forge upserts an `IdeWorkspace` node in Neo4j with
+the volume name and container path. Only that reference is stored, never the
+workspace contents.
+
+| Variable | Meaning |
+| --- | --- |
+| `IDE_URL` | URL the browser loads in the iframe; defaults to `http://127.0.0.1:8080` |
+| `IDE_INTERNAL_URL` | API-side health-check URL; defaults to `IDE_URL` |
+| `IDE_PORT` | Host port published by `compose.ide.yaml`; defaults to `8080` |
+| `IDE_VOLUME` | Docker volume name stored in Neo4j; defaults to `forge-ide_workspace-data` |
+| `IDE_WORKSPACE_NAME` | Display name stored in Neo4j; defaults to `Forge IDE` |
+
+The IDE container uses `--auth none` and binds only to `127.0.0.1`, because it is
+embedded in the loopback-only Forge. It has a terminal, so treat it as a shell
+inside the workspace volume. OpenCode authentication and sessions persist in the
+`forge-ide_opencode-data` volume; run `opencode auth login` in the IDE terminal
+on first use. Code-server settings and extensions persist in
+`forge-ide_ide-data`.
+
+The Docker image does not expose the IDE beyond loopback. If you access the Forge
+from another machine, use a tunnel and set `IDE_URL` to a reachable URL. To
+authenticate OpenCode from a shell:
+
+```sh
+docker compose -f compose.ide.yaml exec -u coder ide opencode auth login
+```
+
+`docker compose -f compose.ide.yaml down -v` deletes the workspace volume and
+everything cloned into it.
 
 ## Build and run locally
 
@@ -275,9 +373,10 @@ Compose prefixes the volume name with its project name (normally
 `backlog-tracker_backlog-data`). Changing the project name selects different data.
 Existing native `data/backlog.sqlite` is neither mounted nor migrated automatically.
 
-Both Compose files store projects, tasks, and all models in that SQLite volume.
-There is no runtime model directory bind. A fresh volume initializes on first
-start; an older database requires the [offline cutover](#sqlite-storage-and-offline-all-model-import).
+Both Compose files store data-model graphs and ERDs in that SQLite volume and
+the backlog in Neo4j. There is no runtime model directory bind. A fresh volume
+initializes on first start; an older database requires the
+[offline cutover](#sqlite-storage-and-offline-all-model-import).
 The VS Code tasks resolve the production volume for dev. For direct dev commands,
 set `BACKLOG_DEV_VOLUME` to that resolved name; dev treats it as an existing external volume.
 
@@ -365,6 +464,7 @@ model directory and a matching older runtime. Keep that coordinated backup separ
 | --- | --- |
 | `npm test` | API integration tests using fresh temporary SQLite and model JSON paths |
 | `npm run test:api` | Same API integration suite |
+| `npm run test:neo4j` | Disposable Neo4j container, then the Neo4j backlog store tests |
 | `npm run test:startup` | After building: isolated dev/build startup, API reload, busy-port and invalid-database regressions |
 | `npm run dev --workspace apps/api` | API only, with Node watch mode |
 | `npm run build --workspace apps/api` | Backend typecheck and compile |
@@ -418,11 +518,14 @@ or `artifacts/`.
 
 ## Data, configuration, and backup
 
-The default database is **`data/backlog.sqlite`**, relative to the repository root
-regardless of the workspace command used. It is created automatically on first
-startup. SQLite may also create `-wal` and `-shm` sidecar files. The local SQLite
-database and its sidecars, other private runtime data, dependencies, build output,
-and verification artifacts are ignored by Git. Model JSON is the exception below.
+The default SQLite database is **`data/backlog.sqlite`**, relative to the
+repository root regardless of the workspace command used. It is created
+automatically on first startup and holds model data and backend schema metadata
+when SQLite model storage is selected. Backlog projects, tasks, and tags are
+stored in Neo4j when the Neo4j backlog store is selected. SQLite may also create
+`-wal` and `-shm` sidecar files. The local SQLite database and its sidecars,
+other private runtime data, dependencies, build output, and verification
+artifacts are ignored by Git. Model JSON is the exception below.
 
 In default file mode, data models are stored separately as schema-versioned JSON at
 **`data/models/model.json`**, also relative to the repository root. Loading a missing
@@ -494,9 +597,19 @@ Optional environment variables for the API:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `BACKLOG_DB_PATH` | `<repo>/data/backlog.sqlite` | SQLite file; relative paths resolve from the API process working directory |
+| `BACKLOG_DB_PATH` | `<repo>/data/backlog.sqlite` | SQLite file for model storage and schema metadata; relative paths resolve from the API process working directory |
 | `BACKLOG_MODEL_PATH` | `<repo>/data/models/model.json` | Singleton file and location anchor for named graph and ERD files in native file mode; unused in SQLite mode. Relative paths resolve from the standalone API working directory. |
 | `BACKLOG_NAMED_MODEL_STORAGE` | `file` (native), `sqlite` (Compose) | SQLite mode initializes a missing DB and requires the all-model v2 schema for an existing DB. File mode refuses cutover databases. |
+| `BACKLOG_STORE` | `neo4j` when `NEO4J_URI` is set, otherwise `sqlite` | Backlog storage backend |
+| `NEO4J_URI` | none | Bolt URI for the backlog database |
+| `NEO4J_USER` | `neo4j` | Neo4j username |
+| `NEO4J_PASSWORD` | none | Neo4j password; required for Neo4j |
+| `NEO4J_DATABASE` | `neo4j` | Neo4j database name |
+| `IDE_URL` | `http://127.0.0.1:8080` | URL loaded by the VS Code iframe |
+| `IDE_INTERNAL_URL` | `IDE_URL` | API-side health-check URL for the IDE; use `http://host.docker.internal:8080` when the API runs in Docker |
+| `IDE_PORT` | `8080` | Host port published by `compose.ide.yaml` |
+| `IDE_VOLUME` | `forge-ide_workspace-data` | Docker volume name stored in the Neo4j `IdeWorkspace` node |
+| `IDE_WORKSPACE_NAME` | `Forge IDE` | Display name stored in the Neo4j `IdeWorkspace` node |
 | `PORT` | `3001` | Local API/production frontend port |
 | `BACKLOG_HOST` | `127.0.0.1` | Bind address: `127.0.0.1` for native use; opt-in `0.0.0.0` for the container only; request guards remain loopback-only |
 | `BACKLOG_WEB_PORT` | `5173` | Frontend port when using the root `npm run dev` command |
@@ -516,6 +629,10 @@ Use the exact addresses shown above; this app is intended for access
 from the same machine.
 
 ### SQLite storage and offline all-model import
+
+This section covers SQLite model storage. When the Neo4j backlog store is
+selected, projects, tasks, and tags are not stored in these tables; the SQLite
+database remains for model data and schema metadata.
 
 The offline v2 cutover makes the selected backlog SQLite database the source of
 truth for named graphs (`named_graph_documents`), the singleton
@@ -640,8 +757,9 @@ for the runtime account (`node` in Docker, your own account in native mode).
 ## API and implementation
 
 The npm workspaces are `apps/web` (React + TypeScript + Vite) and `apps/api`
-(TypeScript, Node HTTP, and SQLite). There are no backend runtime dependencies.
-One root lockfile manages both workspaces.
+(TypeScript, Node HTTP, SQLite, and Neo4j). The API's runtime dependencies are
+Node's built-in modules plus `neo4j-driver`. One root lockfile manages both
+workspaces.
 
 JSON endpoints under `/api`:
 

@@ -1,8 +1,11 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openStore, type BackendSchemaResponse } from './store.ts';
+import { openConfiguredBacklogStore } from './neo4j-store.ts';
+import type { BacklogStore } from './backlog-store.ts';
+import { body, json } from './http.ts';
 import { openModelStore, openNamedModelStore } from './model-store.ts';
 import { MODEL_BODY_LIMIT } from './model-schema.ts';
 import { candidate, compose } from './model-validation.ts';
@@ -19,26 +22,6 @@ const mime: Record<string, string> = {
   '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.json': 'application/json',
 };
 
-function json(response: ServerResponse, status: number, body?: unknown) {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-  response.end(body === undefined ? undefined : JSON.stringify(body));
-}
-
-async function body(request: IncomingMessage, limit = 32768): Promise<unknown> {
-  if (request.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') {
-    throw new HttpError(400, 'Content-Type must be application/json.');
-  }
-  let length = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    length += chunk.length;
-    if (length > limit) throw new HttpError(400, 'Request body is too large.');
-    chunks.push(Buffer.from(chunk));
-  }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-  catch { throw new HttpError(400, 'Request body must contain valid JSON.'); }
-}
-
 function protect(request: IncomingMessage) {
   const host = request.headers.host;
   if (!host || !/^(127\.0\.0\.1|localhost|\[::1\])(?::\d{1,5})?$/i.test(host)) {
@@ -52,13 +35,16 @@ function protect(request: IncomingMessage) {
   }
 }
 
-export function createApp(options: { dbPath: string; modelPath?: string; webRoot?: string; namedModelStorage?: 'file' | 'sqlite' }) {
+export function createApp(options: { dbPath: string; modelPath?: string; webRoot?: string; namedModelStorage?: 'file' | 'sqlite'; backlogStore?: BacklogStore }) {
   const sqliteModels = options.namedModelStorage === 'sqlite';
   const store = openStore(options.dbPath, sqliteModels);
+  const backlog: BacklogStore = options.backlogStore ?? store;
   const modelPath = options.modelPath ?? resolve(root, 'data/models/model.json');
   const namedModelStore = openNamedModelStore(modelPath, { documents: store.modelDocuments?.graphs });
   const modelStore = openModelStore(modelPath, namedModelStore);
   const erStore = openErStore(modelPath, { documents: store.modelDocuments?.erds });
+  const ideUrl = process.env.IDE_URL ?? 'http://127.0.0.1:8080';
+  const ideInternalUrl = process.env.IDE_INTERNAL_URL ?? ideUrl;
   const webRoot = resolve(options.webRoot ?? resolve(root, 'apps/web/dist'));
   const server = createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -67,6 +53,36 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
       protect(request);
       const url = new URL(request.url || '/', 'http://localhost');
       const method = request.method;
+      if (url.pathname === '/api/ide' && method === 'GET') {
+        json(response, 200, {
+          url: ideUrl,
+          name: process.env.IDE_WORKSPACE_NAME ?? 'Forge IDE',
+          volume: process.env.IDE_VOLUME ?? 'forge-ide_workspace-data',
+          containerPath: '/workspace',
+        });
+        return;
+      }
+      if (url.pathname === '/api/ide/workspace' && method === 'POST') {
+        const input = await body(request) as { name?: unknown; volume?: unknown; containerPath?: unknown };
+        if (typeof input.name !== 'string' || !input.name.trim() || typeof input.volume !== 'string' || !input.volume.trim()
+          || typeof input.containerPath !== 'string' || !input.containerPath.startsWith('/')) {
+          throw new HttpError(400, 'Invalid IDE workspace.');
+        }
+        if (!backlog.registerWorkspace) throw new HttpError(503, 'The Neo4j backlog store is required to register the IDE workspace.');
+        await backlog.registerWorkspace({ name: input.name.trim(), volume: input.volume.trim(), containerPath: input.containerPath });
+        json(response, 204);
+        return;
+      }
+      if (url.pathname === '/api/ide/status' && method === 'GET') {
+        try {
+          const result = await fetch(`${ideInternalUrl.replace(/\/+$/, '')}/healthz`, { signal: AbortSignal.timeout(3000) });
+          if (!result.ok) throw new Error(`IDE health check failed (${result.status}).`);
+          json(response, 200, { available: true, url: ideUrl });
+        } catch (error) {
+          json(response, 503, { available: false, url: ideUrl, error: (error as Error).message });
+        }
+        return;
+      }
       if (url.pathname === '/api/backend-schema' && method === 'GET') {
         const metadata: BackendSchemaResponse = {
           sqlite: store.backendSchema(),
@@ -147,36 +163,36 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
         }
       }
       if (url.pathname === '/api/tags') {
-        if (method === 'GET') return json(response, 200, { tags: store.tags() });
-        if (method === 'POST') return json(response, 201, { tag: store.createTag(tagInput(await body(request)) as TagInput) });
+        if (method === 'GET') return json(response, 200, { tags: await backlog.tags() });
+        if (method === 'POST') return json(response, 201, { tag: await backlog.createTag(tagInput(await body(request)) as TagInput) });
       }
       const tagMatch = /^\/api\/tags\/([^/]+)$/.exec(url.pathname);
       if (tagMatch) {
         const tagId = id(tagMatch[1]);
-        if (method === 'PATCH') return json(response, 200, { tag: store.updateTag(tagId, tagInput(await body(request), true)) });
+        if (method === 'PATCH') return json(response, 200, { tag: await backlog.updateTag(tagId, tagInput(await body(request), true)) });
         if (method === 'DELETE') {
-          store.deleteTag(tagId);
+          await backlog.deleteTag(tagId);
           return json(response, 204);
         }
       }
       if (url.pathname === '/api/projects') {
-        if (method === 'GET') return json(response, 200, { projects: store.projects() });
-        if (method === 'POST') return json(response, 201, { project: store.createProject(projectInput(await body(request))) });
+        if (method === 'GET') return json(response, 200, { projects: await backlog.projects() });
+        if (method === 'POST') return json(response, 201, { project: await backlog.createProject(projectInput(await body(request))) });
       }
       if (url.pathname === '/api/tasks') {
-        if (method === 'GET') return json(response, 200, { tasks: store.tasks() });
-        if (method === 'POST') return json(response, 201, { task: store.createTask(taskInput(await body(request))) });
+        if (method === 'GET') return json(response, 200, { tasks: await backlog.tasks() });
+        if (method === 'POST') return json(response, 201, { task: await backlog.createTask(taskInput(await body(request))) });
       }
       const match = /^\/api\/(projects|tasks)\/([^/]+)$/.exec(url.pathname);
       if (match) {
         const resourceId = id(match[2]);
         if (method === 'PATCH') {
-          if (match[1] === 'projects') return json(response, 200, { project: store.updateProject(resourceId, projectInput(await body(request))) });
-          return json(response, 200, { task: store.updateTask(resourceId, taskInput(await body(request), true)) });
+          if (match[1] === 'projects') return json(response, 200, { project: await backlog.updateProject(resourceId, projectInput(await body(request))) });
+          return json(response, 200, { task: await backlog.updateTask(resourceId, taskInput(await body(request), true)) });
         }
         if (method === 'DELETE') {
-          if (match[1] === 'projects') store.deleteProject(resourceId);
-          else store.deleteTask(resourceId);
+          if (match[1] === 'projects') await backlog.deleteProject(resourceId);
+          else await backlog.deleteTask(resourceId);
           return json(response, 204);
         }
       }
@@ -202,28 +218,41 @@ export function createApp(options: { dbPath: string; modelPath?: string; webRoot
       json(response, 500, { error: 'An unexpected server error occurred.' });
     }
   });
-  server.on('close', () => store.close());
+  server.on('close', () => {
+    store.close();
+    if (backlog !== store) void backlog.close();
+  });
   return server;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try { process.loadEnvFile(); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const port = Number(process.env.PORT ?? 3001);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer from 1 to 65535.');
   const host = process.env.BACKLOG_HOST ?? '127.0.0.1';
   if (!['127.0.0.1', '0.0.0.0'].includes(host)) throw new Error('BACKLOG_HOST must be 127.0.0.1 or 0.0.0.0.');
   const namedModelStorage = process.env.BACKLOG_NAMED_MODEL_STORAGE ?? 'file';
   if (namedModelStorage !== 'file' && namedModelStorage !== 'sqlite') throw new Error('BACKLOG_NAMED_MODEL_STORAGE must be file or sqlite.');
-  const server = createApp({
-    dbPath: process.env.BACKLOG_DB_PATH ? resolve(process.env.BACKLOG_DB_PATH) : resolve(root, 'data/backlog.sqlite'),
-    modelPath: process.env.BACKLOG_MODEL_PATH ? resolve(process.env.BACKLOG_MODEL_PATH) : resolve(root, 'data/models/model.json'),
-    namedModelStorage,
-  });
+  const backlogStore = await openConfiguredBacklogStore();
+  let server: ReturnType<typeof createApp>;
+  try {
+    server = createApp({
+      dbPath: process.env.BACKLOG_DB_PATH ? resolve(process.env.BACKLOG_DB_PATH) : resolve(root, 'data/backlog.sqlite'),
+      modelPath: process.env.BACKLOG_MODEL_PATH ? resolve(process.env.BACKLOG_MODEL_PATH) : resolve(root, 'data/models/model.json'),
+      namedModelStorage,
+      backlogStore,
+    });
+  } catch (error) {
+    if (backlogStore) await backlogStore.close();
+    throw error;
+  }
   server.on('error', (error) => { console.error(error.message); server.close(); process.exitCode = 1; });
   server.listen(port, host, () => {
     console.log(`The Forge listening at http://${host}:${port}`);
     if (process.send) process.send({ type: 'backlog:listening' });
   });
-  const stop = () => { server.close(); server.closeIdleConnections(); };
+  const stop = () => { server.close(); server.closeAllConnections(); };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 }

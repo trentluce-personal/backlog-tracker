@@ -18,6 +18,8 @@
 !apps/web/src/**
 !apps/web/public/
 !apps/web/public/**
+!ide/
+!ide/**
 # Deny private/generated files even if placed inside an allowed source tree.
 **/node_modules
 **/dist

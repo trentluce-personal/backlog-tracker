@@ -105,3 +105,8 @@ export function taskInput(value: unknown, partial = false): Partial<TaskInput> {
   if ('tagIds' in body) result.tagIds = tagIds(body.tagIds);
   return result;
 }
+
+export function resolveDueTime(dueDate: string | null, requested: TaskInput['dueTime'] | undefined, previous: TaskInput['dueTime'] = null) {
+  if (dueDate === null && requested != null) throw new HttpError(400, 'Due time requires a due date.');
+  return requested === undefined ? (dueDate === null ? null : previous) : requested;
+}

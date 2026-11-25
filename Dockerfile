@@ -1,4 +1,11 @@
 # syntax=docker/dockerfile:1
+FROM node:24.21.0-bookworm-slim AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/web/package.json ./apps/web/package.json
+RUN npm ci --omit=dev --no-audit --no-fund
+
 FROM node:24.21.0-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -18,6 +25,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 # An empty named volume inherits this directory's non-root ownership.
 RUN mkdir -p /app/data && chown node:node /app/data
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/web/dist ./apps/web/dist

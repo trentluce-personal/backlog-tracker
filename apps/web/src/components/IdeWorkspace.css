@@ -1,0 +1,93 @@
+.ide-workspace-shell {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ide-workspace-shell[hidden] {
+  display: none;
+}
+
+.ide-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--background);
+  color: var(--text);
+}
+
+.ide-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.ide-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ide-title .ui-icon {
+  color: var(--accent);
+}
+
+.ide-toolbar-spacer {
+  flex: 1;
+}
+
+.ide-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--surface);
+}
+
+.ide-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  padding: 32px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.ide-state .ui-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+}
+
+.ide-state h1 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--text);
+}
+
+.ide-state p {
+  max-width: 54ch;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ide-state-hint code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--control);
+  font-size: 11px;
+}

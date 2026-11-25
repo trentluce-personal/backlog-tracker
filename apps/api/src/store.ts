@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { HttpError, type TagInput, type TaskInput } from './validation.ts';
+import { HttpError, resolveDueTime, type TagInput, type TaskInput } from './validation.ts';
 import { checkModelDatabaseFiles, checkSqliteModelStartup, importModelDocuments, openExistingDatabase, openModelDocuments, refuseFileModeAfterCutover, sqliteModelNotReady, type ModelDocuments } from './model-sqlite.ts';
 import { bootstrapSqlite } from './sqlite-bootstrap.ts';
 import { checkSqliteStartup } from './sqlite-startup-check.ts';
@@ -145,10 +145,6 @@ export function openStore(path: string, sqliteModels = false) {
       throw error;
     }
   }
-  function resolveDueTime(dueDate: string | null, requested: TaskInput['dueTime'] | undefined, previous: TaskInput['dueTime'] = null) {
-    if (dueDate === null && requested != null) throw new HttpError(400, 'Due time requires a due date.');
-    return requested === undefined ? (dueDate === null ? null : previous) : requested;
-  }
 
   return {
     modelDocuments,
@@ -183,8 +179,8 @@ export function openStore(path: string, sqliteModels = false) {
         }),
       };
     },
-    projects: () => db.prepare('SELECT * FROM projects ORDER BY createdAt, id').all(),
-    tags: () => db.prepare('SELECT * FROM tags ORDER BY name COLLATE NOCASE, id').all(),
+    projects: () => db.prepare('SELECT * FROM projects ORDER BY createdAt, id').all() as unknown as Project[],
+    tags: () => db.prepare('SELECT * FROM tags ORDER BY name COLLATE NOCASE, id').all() as unknown as Tag[],
     tasks() {
       const rows = db.prepare('SELECT * FROM tasks ORDER BY createdAt, id').all();
       const links = db.prepare('SELECT taskId, tagId FROM task_tags ORDER BY tagId').all();
@@ -193,7 +189,7 @@ export function openStore(path: string, sqliteModels = false) {
         const taskId = String(link.taskId);
         byTask.set(taskId, [...(byTask.get(taskId) ?? []), String(link.tagId)]);
       }
-      return rows.map(row => ({ ...(row as unknown as Task), tagIds: byTask.get(String(row.id)) ?? [] }));
+      return rows.map(row => ({ ...(row as unknown as Task), tagIds: byTask.get(String(row.id)) ?? [] })) as Task[];
     },
     createProject(name: string) {
       const id = randomUUID();

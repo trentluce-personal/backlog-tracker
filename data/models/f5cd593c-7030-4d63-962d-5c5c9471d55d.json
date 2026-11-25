@@ -1,0 +1,295 @@
+{
+  "schemaVersion": 3,
+  "nodes": [
+    {
+      "id": "node-1",
+      "name": "BacklogProject",
+      "x": 300,
+      "y": 200,
+      "kind": "definition",
+      "classification": "Master Data",
+      "draft": false,
+      "properties": [
+        {
+          "name": "id",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "createdAt",
+          "dataType": "STRING",
+          "description": ""
+        }
+      ],
+      "impliedLabels": []
+    },
+    {
+      "id": "node-2",
+      "name": "BacklogTask",
+      "x": 640,
+      "y": 200,
+      "kind": "definition",
+      "classification": "Transactional",
+      "draft": false,
+      "properties": [
+        {
+          "name": "id",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "projectId",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "title",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "description",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "priority",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "dueDate",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "dueTime",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "status",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "createdAt",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "updatedAt",
+          "dataType": "STRING",
+          "description": ""
+        }
+      ],
+      "impliedLabels": []
+    },
+    {
+      "id": "node-3",
+      "name": "BacklogTag",
+      "x": 980,
+      "y": 200,
+      "kind": "definition",
+      "classification": "Reference Data",
+      "draft": false,
+      "properties": [
+        {
+          "name": "id",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "nameKey",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "color",
+          "dataType": "STRING",
+          "description": ""
+        },
+        {
+          "name": "createdAt",
+          "dataType": "STRING",
+          "description": ""
+        }
+      ],
+      "impliedLabels": []
+    }
+  ],
+  "relationshipTypes": [
+    {
+      "id": "relationship-type-1",
+      "name": "IN_PROJECT",
+      "kind": "definition",
+      "draft": false,
+      "properties": [],
+      "sourceLabel": null,
+      "targetLabel": null
+    },
+    {
+      "id": "relationship-type-2",
+      "name": "TAGGED_WITH",
+      "kind": "definition",
+      "draft": false,
+      "properties": [],
+      "sourceLabel": null,
+      "targetLabel": null
+    }
+  ],
+  "relationships": [
+    {
+      "id": "relationship-1",
+      "relationshipTypeId": "relationship-type-1",
+      "source": "node-2",
+      "target": "node-1",
+      "sourceCardinality": "0..*",
+      "targetCardinality": "1..1"
+    },
+    {
+      "id": "relationship-2",
+      "relationshipTypeId": "relationship-type-2",
+      "source": "node-2",
+      "target": "node-3",
+      "sourceCardinality": "0..*",
+      "targetCardinality": "0..*"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "constraint-1",
+      "name": "backlog_project_id_unique",
+      "draft": false,
+      "kind": "UNIQUE",
+      "target": {
+        "kind": "node",
+        "definitionId": "node-1"
+      },
+      "properties": [
+        "id"
+      ]
+    },
+    {
+      "id": "constraint-2",
+      "name": "backlog_task_id_unique",
+      "draft": false,
+      "kind": "UNIQUE",
+      "target": {
+        "kind": "node",
+        "definitionId": "node-2"
+      },
+      "properties": [
+        "id"
+      ]
+    },
+    {
+      "id": "constraint-3",
+      "name": "backlog_tag_id_unique",
+      "draft": false,
+      "kind": "UNIQUE",
+      "target": {
+        "kind": "node",
+        "definitionId": "node-3"
+      },
+      "properties": [
+        "id"
+      ]
+    },
+    {
+      "id": "constraint-4",
+      "name": "backlog_tag_name_key_unique",
+      "draft": false,
+      "kind": "UNIQUE",
+      "target": {
+        "kind": "node",
+        "definitionId": "node-3"
+      },
+      "properties": [
+        "nameKey"
+      ]
+    }
+  ],
+  "indexes": [
+    {
+      "id": "index-1",
+      "name": "backlog_task_project_idx",
+      "draft": false,
+      "kind": "RANGE",
+      "targets": [
+        {
+          "kind": "node",
+          "definitionId": "node-2"
+        }
+      ],
+      "properties": [
+        "projectId"
+      ],
+      "filterProperties": [],
+      "config": {}
+    },
+    {
+      "id": "index-2",
+      "name": "backlog_task_status_idx",
+      "draft": false,
+      "kind": "RANGE",
+      "targets": [
+        {
+          "kind": "node",
+          "definitionId": "node-2"
+        }
+      ],
+      "properties": [
+        "status"
+      ],
+      "filterProperties": [],
+      "config": {}
+    },
+    {
+      "id": "index-3",
+      "name": "backlog_task_due_date_idx",
+      "draft": false,
+      "kind": "RANGE",
+      "targets": [
+        {
+          "kind": "node",
+          "definitionId": "node-2"
+        }
+      ],
+      "properties": [
+        "dueDate"
+      ],
+      "filterProperties": [],
+      "config": {}
+    },
+    {
+      "id": "index-4",
+      "name": "backlog_tag_name_idx",
+      "draft": false,
+      "kind": "RANGE",
+      "targets": [
+        {
+          "kind": "node",
+          "definitionId": "node-3"
+        }
+      ],
+      "properties": [
+        "name"
+      ],
+      "filterProperties": [],
+      "config": {}
+    }
+  ],
+  "revision": 4,
+  "name": "Backlog"
+}

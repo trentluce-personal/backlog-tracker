@@ -10,6 +10,7 @@
     "start": "npm run start --workspace apps/api",
     "test": "npm run test --workspace apps/api",
     "test:api": "npm run test --workspace apps/api",
+    "test:neo4j": "node scripts/test-neo4j.mjs",
     "test:startup": "node scripts/check-startup.mjs",
     "browser": "playwright-cli"
   },

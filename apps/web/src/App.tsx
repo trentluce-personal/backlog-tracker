@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CircleAlert, Columns3, Database, FolderOpen, GitFork, LayoutDashboard, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Search, Table2, Tag as TagIcon } from 'lucide-react';
+import { CircleAlert, Code2, Columns3, Database, FolderOpen, GitFork, LayoutDashboard, LoaderCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Search, Table2, Tag as TagIcon } from 'lucide-react';
 import { Icon } from './components/Icon';
 import { api } from './api';
 import { DeleteConfirmation, ProjectForm, TaskForm } from './components/Forms';
@@ -11,6 +11,7 @@ import { DataModeling, type ModelNavigation } from './components/DataModeling';
 import { Models } from './components/Models';
 import { ErDesigner, type ErNavigation } from './components/erd/ErDesigner';
 import { BackendSchema } from './components/BackendSchema';
+import { IdeWorkspace } from './components/IdeWorkspace';
 import { useModelPersistence } from './components/useModelPersistence';
 import { useButtonRipples } from './ripple';
 import { priorities, statuses, type Priority, type Project, type Status, type Tag, type Task } from './types';
@@ -28,8 +29,9 @@ export function App() {
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [countAnnouncement, setCountAnnouncement] = useState('');
-  const [workspace, setWorkspace] = useState<'backlog' | 'data-modeling' | 'erd' | 'backend-schema'>('backlog');
+  const [workspace, setWorkspace] = useState<'backlog' | 'data-modeling' | 'erd' | 'backend-schema' | 'ide'>('backlog');
   const [navigationCollapsed, setNavigationCollapsed] = useState(false);
+  const [ideVisited, setIdeVisited] = useState(false);
   const modelPersistence = useModelPersistence();
   const modelNavigation = useRef<ModelNavigation | null>(null);
   const erNavigation = useRef<ErNavigation | null>(null);
@@ -179,6 +181,7 @@ export function App() {
               </ul>
             </li>
             <li><button className={`nav-item ${workspace === 'backend-schema' ? 'active' : ''}`} aria-label="Backend schema" title="Backend schema" aria-current={workspace === 'backend-schema' ? 'true' : undefined} disabled={navBusy} onClick={() => navigateWorkspace('backend-schema')}><Icon icon={Database} /><span>Backend schema</span></button></li>
+            <li><button className={`nav-item ${workspace === 'ide' ? 'active' : ''}`} aria-label="VS Code" title="VS Code" aria-current={workspace === 'ide' ? 'true' : undefined} disabled={navBusy} onClick={() => { setIdeVisited(true); navigateWorkspace('ide'); }}><Icon icon={Code2} /><span>VS Code</span></button></li>
           </ul>
         </nav>
         <button className="icon-button navigation-toggle" aria-label={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={navigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!navigationCollapsed} aria-controls="workspace-navigation" disabled={navBusy} onClick={() => { if (modelNavigation.current?.canNavigate() && erNavigation.current?.canNavigate()) setNavigationCollapsed(value => !value); }}><Icon icon={navigationCollapsed ? PanelLeftOpen : PanelLeftClose} /></button>
@@ -216,6 +219,7 @@ export function App() {
         </div>
         <div className="erd-workspace" hidden={workspace !== 'erd'}><ErDesigner active={workspace === 'erd'} navigation={erNavigation} onBlockedChange={setErBlocked} /></div>
         {workspace === 'backend-schema' && <BackendSchema />}
+        {ideVisited && <div className="ide-workspace-shell" hidden={workspace !== 'ide'}><IdeWorkspace /></div>}
         <div className="modeling-workspace" hidden={workspace !== 'data-modeling'}><DataModeling active={workspace === 'data-modeling'} browserOpen={modelsOpen} browseButton={modelsTrigger} onBrowse={() => setModelsOpen(value => !value)} dialog={modelDialog} setDialog={setModelDialog} persistence={modelPersistence} navigation={modelNavigation} onSaved={() => setModelsRefresh(value => value + 1)} >
           <Models active={modelsOpen && workspace === 'data-modeling'} refresh={modelsRefresh} currentId={modelPersistence.id} busy={modelPersistence.saving || modelPersistence.creating || modelPersistence.deleting || modelPersistence.phase === 'loading'} deleting={modelPersistence.deleting} openError={modelPersistence.failedLoadId ? modelPersistence.error : ''} onOpen={id => void openModel(id)} onNew={newModel} onDelete={model => modelNavigation.current?.deleteFromBrowser(model) ?? Promise.resolve(false)} />
         </DataModeling></div>
